@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "toolchains": [
+    {
+      "name": "gcc",
+      "displayName": "GCC Toolchain",
+      "description": "Use GCC compiler",
+      "compiler": {
+        "c": "/usr/bin/gcc",
+        "cxx": "/usr/bin/g++"
+      }
+    },
+    {
+      "name": "clang",
+      "displayName": "Clang Toolchain",
+      "description": "Use Clang compiler",
+      "compiler": {
+        "c": "/usr/bin/clang",
+        "cxx": "/usr/bin/clang++"
+      }
+    }
+  ]
+}

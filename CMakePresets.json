@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "configurePresets": [
+    {
+      "name": "Debug",
+      "displayName": "Debug Build",
+      "description": "A debug build with full debugging symbols",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_FLAGS": "-Wall -Wextra"
+      }
+    },
+    {
+      "name": "Release",
+      "displayName": "Release Build",
+      "description": "An optimized release build",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_FLAGS": "-O2 -Wall -Wextra"
+      }
+    }
+  ]
+}

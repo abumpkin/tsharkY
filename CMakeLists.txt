@@ -1,0 +1,22 @@
+cmake_minimum_required(VERSION 3.16)
+
+project(TsharkY)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+
+set(RAPIDJSON_BUILD_DOC OFF)
+set(RAPIDJSON_BUILD_EXAMPLES OFF)
+set(RAPIDJSON_BUILD_TESTS OFF)
+set(RAPIDJSON_BUILD_THIRDPARTY_GTEST OFF)
+set(APIDJSON_BUILD_CXX17 ON)
+add_subdirectory(3rd/rapidjson)
+
+add_subdirectory(tshark2json)
+
+
+
+
+

@@ -1,0 +1,42 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Clean",
+            "type": "shell",
+            "command": [
+                "rm -rf ${workspaceFolder}/build",
+            ],
+        },
+        {
+            "label": "生成 Release 编译",
+            "type": "shell",
+            "command": [
+                "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1 --preset=Release",
+                "&&",
+                "cmake --build build"
+            ],
+            "dependsOn": ["Clean"]
+        },
+        {
+            "label": "生成 Debug 构建",
+            "type": "shell",
+            "command": [
+                "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1 --preset=Debug",
+                "&&",
+                "cmake --build build --target help"
+            ],
+        },
+        {
+            "label": "生成 tshark2json",
+            "type": "shell",
+            "dependsOrder": "sequence",
+            "dependsOn": "生成 Debug 构建",
+            "command": [
+                "cmake --build build --target tshark2json -v"
+            ],
+        }
+    ]
+}
