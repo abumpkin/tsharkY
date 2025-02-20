@@ -1,3 +1,6 @@
 [submodule "3rd/rapidjson"]
 	path = 3rd/rapidjson
 	url = https://github.com/Tencent/rapidjson.git
+[submodule "3rd/ip2region"]
+	path = 3rd/ip2region
+	url = https://github.com/lionsoul2014/ip2region.git

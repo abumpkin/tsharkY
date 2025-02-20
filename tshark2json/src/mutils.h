@@ -1,8 +1,9 @@
 #pragma once
 #include <cstddef>
-#include <vector>
-#include <string>
 #include <cstdint>
+#include <string>
+#include <vector>
+#include <xdb_search.h>
 
 inline std::string const utils_exec_cmd(std::string const &cmd) {
     std::string out;
@@ -40,7 +41,7 @@ inline std::string const utils_data_to_hex(std::vector<char> const &data) {
     return ret;
 }
 
-inline std::vector<std::string> const utils_split_str(std::string const & str, std::string const & sep) {
+inline std::vector<std::string> const utils_split_str(std::string const &str, std::string const &sep) {
     std::vector<std::string> ret;
     std::string::size_type pos1 = 0, pos2 = std::string::npos;
     while (true) {
@@ -49,5 +50,36 @@ inline std::vector<std::string> const utils_split_str(std::string const & str, s
         if (pos2 == std::string::npos) break;
         pos1 = pos2 + 1;
     }
+    return ret;
+}
+
+inline std::string const utils_join_str(std::vector<std::string> const &strs, std::string const &sep) {
+    std::string ret;
+    for (auto &i : strs) {
+        ret.append(sep);
+        ret.append(i);
+    }
+    return ret.substr(sep.size());
+}
+
+inline std::string const utils_replace_str_all(std::string const &str, std::string const &pat, std::string const &rep) {
+    std::vector<std::string> parts = utils_split_str(str, pat);
+    std::string ret = utils_join_str(parts, rep);
+    return ret;
+}
+
+inline std::string const utils_ip2region(std::string ip) {
+    std::string ret;
+    static xdb_search_t searcher = xdb_search_t("3rd/ip2region/data/ip2region.xdb");
+    ret = searcher.search(ip);
+    if (ret.find("invalid") != std::string::npos) return "";
+    if (ret.find("内网") != std::string::npos) return "内网";
+    ret = utils_replace_str_all(ret, "0", "");
+    std::vector<std::string> parts;
+    for (auto &i : utils_split_str(ret, "|")) {
+        if (i.empty()) continue;
+        parts.push_back(i);
+    }
+    ret = utils_join_str(parts, "-");
     return ret;
 }

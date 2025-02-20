@@ -37,8 +37,10 @@ struct Packet {
     uint32_t frame_offset;
     uint32_t frame_caplen;
     std::string time;
+    std::string src_location;
     std::string src_ip;
     uint16_t src_port;
+    std::string dst_location;
     std::string dst_ip;
     uint16_t dst_port;
     std::string protocol;
@@ -110,15 +112,18 @@ std::vector<Packet> load_pcap_data(std::string const &path) {
             std::vector<std::string> ports = utils_split_str(src_dst_port, ",");
             if (ports.size() == 2) {
                 packet.src_port = static_cast<uint16_t>(std::stoi(ports[0]));
-                packet.src_port = static_cast<uint16_t>(std::stoi(ports[1]));
+                packet.dst_port = static_cast<uint16_t>(std::stoi(ports[1]));
             }
         }
-
+        // 原始数据
         if (packet.frame_number <= offset_len.size()) {
             auto [offset, caplen] = offset_len[packet.frame_number - 1];
             packet.frame_offset = offset;
             packet.frame_caplen = caplen;
         }
+        // 归属地
+        packet.src_location = utils_ip2region(packet.src_ip);
+        packet.dst_location = utils_ip2region(packet.dst_ip);
         packets.push_back(packet);
     }
 
@@ -139,7 +144,7 @@ std::vector<char> const read_raw_packet_data(std::string const &path, Packet con
 
 std::string const get_json_string(rapidjson::Value const &obj) {
     rapidjson::StringBuffer json_data;
-    rapidjson::Writer<rapidjson::StringBuffer> writer = rapidjson::Writer(json_data);
+    rapidjson::PrettyWriter<rapidjson::StringBuffer> writer = rapidjson::PrettyWriter(json_data);
     obj.Accept(writer);
     return json_data.GetString();
 }
@@ -157,8 +162,11 @@ int32_t main() {
         pkt_obj.AddMember("frame_offset", p.frame_offset, allocator);
         pkt_obj.AddMember("frame_caplen", p.frame_caplen, allocator);
         pkt_obj.AddMember("timestamp", rapidjson::Value(p.time.c_str(), allocator), allocator);
+        pkt_obj.AddMember("protocol", rapidjson::Value(p.protocol.c_str(), allocator), allocator);
+        pkt_obj.AddMember("src_location", rapidjson::Value(p.src_location.c_str(), allocator), allocator);
         pkt_obj.AddMember("src_ip", rapidjson::Value(p.src_ip.c_str(), allocator), allocator);
         pkt_obj.AddMember("src_port", p.src_port, allocator);
+        pkt_obj.AddMember("dst_location", rapidjson::Value(p.dst_location.c_str(), allocator), allocator);
         pkt_obj.AddMember("dst_ip", rapidjson::Value(p.dst_ip.c_str(), allocator), allocator);
         pkt_obj.AddMember("dst_port", p.dst_port, allocator);
         pkt_obj.AddMember("info", rapidjson::Value(p.info.c_str(), allocator), allocator);
