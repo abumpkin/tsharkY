@@ -7,11 +7,20 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "tshark2json",
-            "program": "${workspaceFolder}/build/tshark2json/tshark2json",
+            "name": "tshark_server",
+            "program": "${workspaceFolder}/build/tshark_server/tshark_server",
             "args": [],
             "cwd": "${workspaceFolder}",
-            "preLaunchTask": "生成 tshark2json",
+            "preLaunchTask": "生成 tshark_server",
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "当前 test 代码",
+            "program": "${workspaceFolder}/build/tests/${fileBasenameNoExtension}",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "生成当前 test",
         }
     ]
 }

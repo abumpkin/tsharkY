@@ -30,12 +30,21 @@
             ],
         },
         {
-            "label": "生成 tshark2json",
+            "label": "生成当前 test",
             "type": "shell",
             "dependsOrder": "sequence",
             "dependsOn": "生成 Debug 构建",
             "command": [
-                "cmake --build build --target tshark2json -v"
+                "cmake --build build --target ${fileBasenameNoExtension} -v"
+            ],
+        },
+        {
+            "label": "生成 tshark_server",
+            "type": "shell",
+            "dependsOrder": "sequence",
+            "dependsOn": "生成 Debug 构建",
+            "command": [
+                "cmake --build build --target tshark_server -v"
             ],
         }
     ]
