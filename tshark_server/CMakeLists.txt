@@ -10,4 +10,5 @@ target_link_libraries(tshark_server PRIVATE
     ip2region
     loguru
     Boost::process
+    tinyxml2
 )

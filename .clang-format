@@ -33,7 +33,12 @@ BraceWrapping:
   # 缩进大括号
   IndentBraces: false
 
-AllowShortIfStatementsOnASingleLine: true
+AllowShortBlocksOnASingleLine: Empty
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortEnumsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLambdasOnASingleLine: Empty
 IndentCaseLabels: false
 # 访问说明符(public、private等)的偏移
 AccessModifierOffset: 0

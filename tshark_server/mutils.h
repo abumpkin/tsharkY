@@ -1,11 +1,11 @@
 /**
  * @file mutils.h
  * @author abumpkin (forwardslash@foxmail.com)
- * 
+ *
  * ISC License
  *
  * @copyright Copyright (c) 2025 abumpkin
- * 
+ *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
  * copyright notice and this permission notice appear in all copies.
@@ -22,11 +22,16 @@
 #pragma once
 #include "boost/filesystem/operations.hpp"
 #include "boost/filesystem/path.hpp"
+#include "rapidjson/document.h"
+#include "rapidjson/prettywriter.h"
+#include "rapidjson/stringbuffer.h"
+#include "rapidjson/writer.h"
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 #include <string>
 #include <vector>
 #include <xdb_search.h>
@@ -98,14 +103,16 @@ inline std::string const utils_replace_str_all(
 }
 
 inline std::string &utils_str_lowcase(std::string &t) {
-    std::transform(t.cbegin(), t.cend(), t.begin(),
-        [](unsigned char c) { return std::tolower(c); });
+    std::transform(t.cbegin(), t.cend(), t.begin(), [](unsigned char c) {
+        return std::tolower(c);
+    });
     return t;
 }
 
 inline std::string &utils_str_upcase(std::string &t) {
-    std::transform(t.cbegin(), t.cend(), t.begin(),
-        [](unsigned char c) { return std::toupper(c); });
+    std::transform(t.cbegin(), t.cend(), t.begin(), [](unsigned char c) {
+        return std::toupper(c);
+    });
     return t;
 }
 
@@ -146,4 +153,25 @@ inline boost::filesystem::path utils_test_valid_filename(
     // }
     if (boost::filesystem::is_directory(test)) return "";
     return test;
+}
+
+inline std::string utils_to_json(
+    rapidjson::Value const &json_obj, bool pretty = false) {
+    rapidjson::MemoryPoolAllocator<> allocator;
+    rapidjson::StringBuffer json_data;
+    std::string ret;
+    std::unique_ptr<rapidjson::Writer<rapidjson::StringBuffer>> writer;
+    if (pretty) {
+        rapidjson::PrettyWriter<rapidjson::StringBuffer> writer =
+            rapidjson::PrettyWriter(json_data);
+        json_obj.Accept(writer);
+        ret = json_data.GetString();
+    }
+    else {
+        rapidjson::Writer<rapidjson::StringBuffer> writer =
+            rapidjson::Writer(json_data);
+        json_obj.Accept(writer);
+        ret = json_data.GetString();
+    }
+    return ret;
 }

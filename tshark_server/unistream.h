@@ -1,11 +1,11 @@
 /**
  * @file unistream.h
  * @author abumpkin (forwardslash@foxmail.com)
- * 
+ *
  * ISC License
  *
  * @copyright Copyright (c) 2025 abumpkin
- * 
+ *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
  * copyright notice and this permission notice appear in all copies.
@@ -33,10 +33,12 @@
 #include <boost/process/v2/environment.hpp>
 #include <boost/process/v2/process.hpp>
 #include <boost/process/v2/stdio.hpp>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <future>
 #include <ios>
 #include <iostream>
 #include <istream>
@@ -57,9 +59,16 @@ struct UniStreamInterface {
     virtual uint32_t read(char *buf, uint32_t len) = 0;
     virtual uint32_t write(char const *buf, uint32_t len) = 0;
     virtual void write_eof() = 0;
+    virtual void close_read() = 0;
     virtual bool read_eof() = 0;
     virtual uint32_t read_offset() = 0;
     virtual uint32_t write_offset() = 0;
+
+    virtual std::future<uint32_t> read_async(char *buf, uint32_t len) {
+        return std::async(std::launch::async, [=]() {
+            return read(buf, len);
+        });
+    }
 
     virtual std::string read_until(char const t) {
         char rd;
@@ -175,6 +184,13 @@ class UniStreamPipeUnblocked : public UniStreamInterface {
     virtual bool read_eof() override {
         return !(rp.is_open() || read_buf.size());
     }
+    virtual void close_read() override {
+        try {
+            if (p) p->terminate();
+        }
+        catch (...) {
+        };
+    }
     virtual void write_eof() override {
         try {
             wp.close();
@@ -182,8 +198,12 @@ class UniStreamPipeUnblocked : public UniStreamInterface {
         catch (...) {
         };
     }
-    virtual uint32_t read_offset() override { return r_pos; }
-    virtual uint32_t write_offset() override { return w_pos; }
+    virtual uint32_t read_offset() override {
+        return r_pos;
+    }
+    virtual uint32_t write_offset() override {
+        return w_pos;
+    }
     ~UniStreamPipeUnblocked() {
         write_eof();
         try {
@@ -206,7 +226,8 @@ class UniStreamPipe : public UniStreamInterface {
     bool r_eof;
 
     public:
-    UniStreamPipe(std::string cmd) : ctx(), rp(ctx), wp(ctx), r_pos(0), w_pos(0) {
+    UniStreamPipe(std::string cmd)
+        : ctx(), rp(ctx), wp(ctx), r_pos(0), w_pos(0) {
         r_eof = false;
         std::vector<std::string> args = utils_split_str(cmd, " ");
         auto exe = boost::process::environment::find_executable(args[0]);
@@ -250,7 +271,16 @@ class UniStreamPipe : public UniStreamInterface {
             return 0;
         }
     }
-    virtual bool read_eof() override { return r_eof; }
+    virtual bool read_eof() override {
+        return r_eof;
+    }
+    virtual void close_read() override {
+        try {
+            if (p) p->terminate();
+        }
+        catch (...) {
+        };
+    }
     virtual void write_eof() override {
         try {
             wp.close();
@@ -258,9 +288,16 @@ class UniStreamPipe : public UniStreamInterface {
         catch (...) {
         };
     }
-    virtual uint32_t read_offset() override { return r_pos; }
-    virtual uint32_t write_offset() override { return w_pos; }
-    ~UniStreamPipe() { write_eof(); }
+    virtual uint32_t read_offset() override {
+        return r_pos;
+    }
+    virtual uint32_t write_offset() override {
+        return w_pos;
+    }
+    ~UniStreamPipe() {
+        write_eof();
+        close_read();
+    }
 };
 
 /**
@@ -295,10 +332,21 @@ class UniStreamFile : public UniStreamInterface {
         w_pos += pos2;
         return pos2;
     }
-    virtual void write_eof() override { f.close(); }
-    virtual bool read_eof() override { return f.eof(); }
-    virtual uint32_t read_offset() override { return r_pos; }
-    virtual uint32_t write_offset() override { return w_pos; }
+    virtual void write_eof() override {
+        f.close();
+    }
+    virtual void close_read() override {
+        f.close();
+    }
+    virtual bool read_eof() override {
+        return f.eof();
+    }
+    virtual uint32_t read_offset() override {
+        return r_pos;
+    }
+    virtual uint32_t write_offset() override {
+        return w_pos;
+    }
 };
 
 class UniStreamMemory : public UniStreamInterface {
@@ -325,9 +373,16 @@ class UniStreamMemory : public UniStreamInterface {
         return ret;
     }
     virtual void write_eof() override {}
-    virtual bool read_eof() override { return f->eof(); }
-    virtual uint32_t read_offset() override { return r_pos; }
-    virtual uint32_t write_offset() override { return w_pos; }
+    virtual void close_read() override {}
+    virtual bool read_eof() override {
+        return f->eof();
+    }
+    virtual uint32_t read_offset() override {
+        return r_pos;
+    }
+    virtual uint32_t write_offset() override {
+        return w_pos;
+    }
 };
 
 class UniSyncR2W : public UniStreamInterface {
@@ -364,9 +419,22 @@ class UniSyncR2W : public UniStreamInterface {
         w->write(buf, ret);
         return ret;
     }
-    virtual uint32_t write(char const *, uint32_t) override { return 0; }
-    virtual void write_eof() override { w->write_eof(); }
-    virtual bool read_eof() override { return r->read_eof(); }
-    virtual uint32_t read_offset() override { return r->read_offset(); }
-    virtual uint32_t write_offset() override { return w->write_offset(); }
+    virtual uint32_t write(char const *, uint32_t) override {
+        return 0;
+    }
+    virtual void write_eof() override {
+        w->write_eof();
+    }
+    virtual void close_read() override {
+        r->close_read();
+    }
+    virtual bool read_eof() override {
+        return r->read_eof();
+    }
+    virtual uint32_t read_offset() override {
+        return r->read_offset();
+    }
+    virtual uint32_t write_offset() override {
+        return w->write_offset();
+    }
 };

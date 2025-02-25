@@ -1,10 +1,10 @@
 #include "mutils.h"
 #include "tshark_manager.h"
+#include <chrono>
 #include <cstdint>
 #include <ios>
 #include <loguru.hpp>
 #include <thread>
-#include <chrono>
 
 int main(int argc, char **argv) {
     loguru::init(argc, argv);
@@ -14,28 +14,33 @@ int main(int argc, char **argv) {
 
     // 网卡信息
     auto ifs = m.interfaces_get_info().get();
-    for (auto &i: ifs) {
-        LOG_F(INFO, "网卡名称：%s  别名：%s", i.name.c_str(), i.friendly_name.c_str());
+    for (auto &i : ifs) {
+        LOG_F(INFO, "网卡名称：%s  别名：%s", i.name.c_str(),
+            i.friendly_name.c_str());
     }
     // 抓包
-    c = 5;
+    m.interfaces_activity_monitor_start().wait();
     m.capture_start("", [&](std::shared_ptr<Packet> packet) {
         LOG_F(0, "pcap: offset = %u  len = %u", packet->frame_offset,
             packet->frame_caplen);
         LOG_F(INFO, "%s", packet->to_json().c_str());
-        if (c-- == 0) return SharkLoader::PKT_PARSE_STAT::PARSE_STOP;
-        return SharkLoader::PKT_PARSE_STAT::PARSE_CONTINUE;
-    });
+        return SharkLoader::PKT_TREATMENT::PKT_SAVE;
+    }, "wlan0");
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+    if (m.capture_stop().get()) {
+        LOG_F(INFO, "停止捕获数据");
+    }
 
-    // 流量
-    c = 5;
-    std::cout << std::boolalpha << m.interfaces_traffic_monitor_start().get() << std::endl;
-    while (m.interfaces_traffic_monitor_is_running().get()) {
-        std::this_thread::sleep_for(std::chrono_literals::operator""s(1));
-        for (auto &[k,v] : m.interfaces_traffic_monitor_read().get()) {
+    // 网卡活动信息
+    c = 3;
+    while (c--) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        for (auto &[k, v] : m.interfaces_activity_monitor_read().get()) {
             LOG_F(INFO, "%s: %u", k.c_str(), v);
         }
-        if (c-- == 0) m.interfaces_traffic_monitor_stop();
+    }
+    if (m.interfaces_activity_monitor_stop().get()) {
+        LOG_F(INFO, "停止统计所有网卡活动");
     }
     return 0;
 }

@@ -1,36 +1,21 @@
-#include <istream>
-#include <sstream>
-#include <streambuf>
-#include <string>
+#include "mutils.h"
+#include "tinyxml2.h"
+#include <cstdint>
+#include <cstring>
 #include <iostream>
-#include "boost/asio/streambuf.hpp"
-
+#include <memory>
+#include <string>
+#include <traffic_statistics.h>
+#include <unistream.h>
+#include <unordered_map>
+#include <vector>
 
 int main() {
-    std::stringbuf buf;
-    boost::asio::streambuf sbuf;
-    std::iostream s(&sbuf);
+    std::string file = "dump_data/pdml.xml";
 
-    std::cout.setf(std::ios::boolalpha);
-    s << "ni hao 1213";
-    std::string t;
-    s >> t;
-    // std::cout << t << std::endl;
-    std::cout << (char*)sbuf.data().data() << sbuf.size() << std::endl;
-    s >> t;
-    std::cout << t << std::endl;
-    std::cout << s.fail() << std::endl;
-    s >> t;
-    std::cout << t << std::endl;
-    std::cout << s.fail() << std::endl;
-    std::cout << s.eof() << std::endl;
-    s.clear();
-    s.write("fff", 3);
-    std::cout << s.fail() << std::endl;
-    std::cout << s.eof() << std::endl;
-    s >> t;
-    std::cout << t << std::endl;
-    std::cout << s.fail() << std::endl;
-    std::cout << s.eof() << std::endl;
-    std::cout << buf.str() << std::endl;
+    std::string xml = UniStreamFile(file).read_until_eof();
+    PacketDefineDecode p(xml);
+    std::cout << p.to_json(true) << std::endl;
+
+    return 0;
 }

@@ -10,3 +10,6 @@
 [submodule "3rd/boost"]
 	path = 3rd/boost
 	url = https://github.com/boostorg/boost.git
+[submodule "3rd/tinyxml2"]
+	path = 3rd/tinyxml2
+	url = https://github.com/leethomason/tinyxml2.git

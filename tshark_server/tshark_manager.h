@@ -27,6 +27,7 @@
 #include "tshark_info.h"
 #include "unistream.h"
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
@@ -49,12 +50,15 @@ class TSharkManager;
 struct SharkCaptureThread;
 
 struct SharkLoader {
-    enum class PKT_PARSE_STAT { PARSE_CONTINUE, PARSE_ERROR, PARSE_STOP };
-    using PacketHandler =
-        std::function<PKT_PARSE_STAT(std::shared_ptr<Packet>)>;
+    enum class PKT_TREATMENT {
+        PKT_DROP,
+        PKT_SAVE,
+        PKT_ERROR
+    };
+    using PacketHandler = std::function<PKT_TREATMENT(std::shared_ptr<Packet>)>;
 
     protected:
-    friend SharkCaptureThread;
+    volatile std::atomic_bool stop_ctl = false;
     struct CMD_Fields {
         char const *frame_number = "frame.number";
         char const *frame_timestamp = "frame.time_epoch";
@@ -72,13 +76,13 @@ struct SharkLoader {
     constexpr static const uint32_t CMD_FIELD_NUM =
         sizeof(CMD_Fields) / sizeof(char const *);
 
-    static PKT_PARSE_STAT pkt_pase_routine(std::string const &info,
+    static PKT_TREATMENT pkt_pase_routine(std::string const &info,
         std::shared_ptr<Packet> packet, PacketHandler handler) {
         std::vector<std::string> fields;
         CMD_Fields cmd_field;
         fields = utils_split_str(info, "\t");
         if (fields.size() < CMD_FIELD_NUM) {
-            return PKT_PARSE_STAT::PARSE_ERROR;
+            return PKT_TREATMENT::PKT_ERROR;
         }
         for (uint32_t i = 0; i < CMD_FIELD_NUM; i++) {
             reinterpret_cast<char const **>(&cmd_field)[i] = "";
@@ -121,7 +125,7 @@ struct SharkLoader {
         if (handler) {
             return handler(packet);
         }
-        return PKT_PARSE_STAT::PARSE_CONTINUE;
+        return PKT_TREATMENT::PKT_SAVE;
     }
 
     static std::shared_ptr<UniStreamInterface> create_parser_stream() {
@@ -141,14 +145,21 @@ struct SharkLoader {
     SharkLoader() = default;
     SharkLoader(SharkLoader &) = delete;
     SharkLoader &operator=(SharkLoader &) = delete;
-    SharkLoader(SharkLoader &&) = default;
-    SharkLoader &operator=(SharkLoader &&) = default;
+    SharkLoader(SharkLoader &&) = delete;
+    SharkLoader &operator=(SharkLoader &&) = delete;
     std::vector<char> fixed_data;
     std::vector<std::shared_ptr<Packet>> packets_list;
     std::unordered_map<uint32_t, std::shared_ptr<Packet>> packets;
 
-    virtual bool load(std::shared_ptr<UniStreamInterface> stream,
-        PacketHandler handler = nullptr) = 0;
+    virtual bool load(
+        std::shared_ptr<UniStreamInterface>, PacketHandler = nullptr) {
+        stop_ctl = false;
+        return false;
+    }
+
+    virtual void interrupt_load() {
+        if (!stop_ctl) stop_ctl = true;
+    }
 };
 
 struct SharkPcapngLoader : SharkLoader {
@@ -181,8 +192,9 @@ struct SharkPcapngLoader : SharkLoader {
         uint32_t original_packet_length;
     };
 
-    bool load(std::shared_ptr<UniStreamInterface> stream,
+    virtual bool load(std::shared_ptr<UniStreamInterface> stream,
         PacketHandler handler = nullptr) override {
+        SharkLoader::load(stream, handler);
         auto parser_stream = create_parser_stream();
         auto bin_stream = UniSyncR2W::Make(stream, parser_stream);
         GeneralHeader section;
@@ -190,7 +202,18 @@ struct SharkPcapngLoader : SharkLoader {
         char *p_section = reinterpret_cast<char *>(&section);
         uint32_t rd_len;
         bool right_format = false;
-        while (bin_stream->read(p_section, sizeof(section))) {
+        std::future<uint32_t> read_len;
+        while (true) {
+            read_len = bin_stream->read_async(p_section, sizeof(section));
+            do {
+                if (stop_ctl) {
+                    bin_stream->close_read();
+                    return false;
+                }
+            } while (read_len.wait_for(std::chrono::milliseconds(100)) ==
+                     std::future_status::timeout);
+            rd_len = read_len.get();
+            if (!rd_len) return false;
             if (section.block_type == 0x0a0d0d0a ||
                 section.block_type == 0x00000001) {
                 if (fixed_data.capacity() - fixed_data.size() <
@@ -246,15 +269,14 @@ struct SharkPcapngLoader : SharkLoader {
                     return false;
                 }
                 std::string explain = parser_stream->read_until('\n');
-                PKT_PARSE_STAT stat = pkt_pase_routine(explain, pkt, handler);
-                if (stat == PKT_PARSE_STAT::PARSE_ERROR) {
+                PKT_TREATMENT stat = pkt_pase_routine(explain, pkt, handler);
+                if (stat == PKT_TREATMENT::PKT_ERROR) {
                     LOG_F(ERROR, "ERROR: packet parse failure.");
                     return false;
                 }
-                packets_list.push_back(pkt);
-                packets.emplace(pkt->frame_number, pkt);
-                if (stat == PKT_PARSE_STAT::PARSE_STOP) {
-                    return true;
+                if (stat == PKT_TREATMENT::PKT_SAVE) {
+                    packets_list.push_back(pkt);
+                    packets.emplace(pkt->frame_number, pkt);
                 }
                 continue;
             }
@@ -287,8 +309,9 @@ struct SharkPcapLoader : SharkLoader {
         uint32_t len;
     };
 
-    bool load(std::shared_ptr<UniStreamInterface> stream,
+    virtual bool load(std::shared_ptr<UniStreamInterface> stream,
         PacketHandler handler = nullptr) override {
+        SharkLoader::load(stream, handler);
         auto parser_stream = create_parser_stream();
         auto bin_stream = UniSyncR2W::Make(stream, parser_stream);
         PcapPacketHeader section;
@@ -304,7 +327,20 @@ struct SharkPcapLoader : SharkLoader {
             return false;
         }
         uint32_t rd_len;
-        while (bin_stream->read(p_section, sizeof(PcapPacketHeader))) {
+        std::future<uint32_t> read_len;
+        while (true) {
+            read_len =
+                bin_stream->read_async(p_section, sizeof(PcapPacketHeader));
+            do {
+                if (stop_ctl) {
+                    bin_stream->close_read();
+                    return false;
+                }
+            } while (read_len.wait_for(std::chrono::milliseconds(100)) ==
+                     std::future_status::timeout);
+            rd_len = read_len.get();
+            if (!rd_len) return false;
+
             std::shared_ptr<Packet> pkt = std::make_shared<Packet>();
             pkt->frame_offset = bin_stream->read_offset();
             pkt->frame_caplen = section.caplen;
@@ -314,15 +350,14 @@ struct SharkPcapLoader : SharkLoader {
                 return false;
             }
             std::string explain = parser_stream->read_until('\n');
-            PKT_PARSE_STAT stat = pkt_pase_routine(explain, pkt, handler);
-            if (stat == PKT_PARSE_STAT::PARSE_ERROR) {
+            PKT_TREATMENT stat = pkt_pase_routine(explain, pkt, handler);
+            if (stat == PKT_TREATMENT::PKT_ERROR) {
                 LOG_F(ERROR, "ERROR: packet parse failure.");
                 return false;
             }
-            packets_list.push_back(pkt);
-            packets.emplace(pkt->frame_number, pkt);
-            if (stat == PKT_PARSE_STAT::PARSE_STOP) {
-                return true;
+            if (stat == PKT_TREATMENT::PKT_SAVE) {
+                packets_list.push_back(pkt);
+                packets.emplace(pkt->frame_number, pkt);
             }
         }
         return true;
@@ -340,7 +375,6 @@ struct SharkCaptureThread {
     std::promise<bool> stop_status;
     volatile std::atomic_bool is_capturing = false;
     volatile std::atomic_bool is_done_with_succeed = false;
-    volatile std::atomic_bool capture_stop_ctl = false;
 
     public:
     SharkCaptureThread() = default;
@@ -433,8 +467,9 @@ struct SharkCaptureThread {
                     LOG_F(ERROR,
                         "ERROR: Thread create fail. Capture thread already in "
                         "running.");
-                    return std::async(
-                        std::launch::deferred, []() { return false; });
+                    return std::async(std::launch::deferred, []() {
+                        return false;
+                    });
                 }
             }
             t_t->join();
@@ -442,7 +477,6 @@ struct SharkCaptureThread {
         {
             std::lock_guard<std::mutex> lock(t_m);
             this->is_capturing = false;
-            this->capture_stop_ctl = false;
             this->is_done_with_succeed = false;
             start_status = std::promise<bool>();
             ret = start_status.get_future();
@@ -458,9 +492,11 @@ struct SharkCaptureThread {
         if (!is_capturing) {
             LOG_F(ERROR,
                 "ERROR: Not in capturing. There is no need to stop capture.");
-            return std::async(std::launch::deferred, []() { return false; });
+            return std::async(std::launch::deferred, []() {
+                return false;
+            });
         }
-        this->capture_stop_ctl = true;
+        loader->interrupt_load();
         stop_status = std::promise<bool>();
         ret = stop_status.get_future();
         return ret;
@@ -491,25 +527,12 @@ struct SharkCaptureThread {
             tobj->is_capturing = true;
             tobj->start_status.set_value(true);
         }
-        tobj->is_done_with_succeed = tobj->start_capture_blocked(
-            save_to,
-            [&](std::shared_ptr<Packet> p) {
-                {
-                    std::lock_guard<std::mutex> lock(tobj->t_m);
-                    if (tobj->capture_stop_ctl)
-                        return SharkLoader::PKT_PARSE_STAT::PARSE_STOP;
-                }
-                if (handler) return handler(p);
-                return SharkLoader::PKT_PARSE_STAT::PARSE_CONTINUE;
-            },
-            if_name);
+        tobj->is_done_with_succeed =
+            tobj->start_capture_blocked(save_to, handler, if_name);
         {
             std::lock_guard<std::mutex> lock(tobj->t_m);
             tobj->is_capturing = false;
-            if (tobj->capture_stop_ctl) {
-                tobj->capture_stop_ctl = false;
-                tobj->stop_status.set_value(true);
-            }
+            tobj->stop_status.set_value_at_thread_exit(true);
         }
     }
 
@@ -534,7 +557,7 @@ class TSharkManager {
     } ctl_thread_sig;
 
     SharkCaptureThread capture_thread;
-    InterfacesStatisticsThread statistics_thread;
+    InterfacesActivityThread statistics_thread;
     std::condition_variable ctl_cv;
     std::mutex ctl_m;
 
@@ -542,8 +565,9 @@ class TSharkManager {
     TSharkManager() {}
     static void thread(TSharkManager *const manager) {
         std::unique_lock<std::mutex> lock(manager->ctl_m);
-        manager->ctl_cv.wait(lock,
-            [&]() { return manager->ctl_thread_sig != CTLSIG::NO_ACTION; });
+        manager->ctl_cv.wait(lock, [&]() {
+            return manager->ctl_thread_sig != CTLSIG::NO_ACTION;
+        });
         switch (manager->ctl_thread_sig) {
         case CTLSIG::START_CAPTURE:
             break;
@@ -559,7 +583,9 @@ class TSharkManager {
         return capture_thread.start_capture(save_to, handler, if_name);
     }
 
-    std::future<bool> capture_stop() { return capture_thread.stop_capture(); }
+    std::future<bool> capture_stop() {
+        return capture_thread.stop_capture();
+    }
 
     std::future<std::weak_ptr<SharkLoader>> capture_from_file(
         boost::filesystem::path path) {
@@ -571,8 +597,9 @@ class TSharkManager {
     }
 
     std::future<bool> capture_is_running() {
-        return std::async(std::launch::deferred,
-            [&]() { return capture_thread.capturing_status(); });
+        return std::async(std::launch::deferred, [&]() {
+            return capture_thread.capturing_status();
+        });
     }
 
     std::future<std::vector<IfaceInfo>> interfaces_get_info() {
@@ -617,22 +644,24 @@ class TSharkManager {
         });
     }
 
-    std::future<bool> interfaces_traffic_monitor_start() {
+    std::future<bool> interfaces_activity_monitor_start() {
         return statistics_thread.start();
     }
 
-    std::future<bool> interfaces_traffic_monitor_stop() {
+    std::future<bool> interfaces_activity_monitor_stop() {
         return statistics_thread.stop();
     }
 
-    std::future<bool> interfaces_traffic_monitor_is_running() {
-        return std::async(std::launch::deferred,
-            [&]() { return statistics_thread.operating_status(); });
+    std::future<bool> interfaces_activity_monitor_is_running() {
+        return std::async(std::launch::deferred, [&]() {
+            return statistics_thread.operating_status();
+        });
     }
 
     std::future<std::unordered_map<std::string, uint32_t>>
-    interfaces_traffic_monitor_read() {
-        return std::async(
-            std::launch::deferred, [&]() { return statistics_thread.read(); });
+    interfaces_activity_monitor_read() {
+        return std::async(std::launch::deferred, [&]() {
+            return statistics_thread.read();
+        });
     }
 };

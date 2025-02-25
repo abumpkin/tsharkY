@@ -1,11 +1,11 @@
 /**
  * @file traffic_statistics.h
  * @author abumpkin (forwardslash@foxmail.com)
- * 
+ *
  * ISC License
  *
  * @copyright Copyright (c) 2025 abumpkin
- * 
+ *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
  * copyright notice and this permission notice appear in all copies.
@@ -28,13 +28,15 @@
 #include <cstdint>
 #include <future>
 #include <loguru.hpp>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <tinyxml2.h>
 #include <unordered_map>
 #include <vector>
 
-struct InterfacesStatisticsThread {
+struct InterfacesActivityThread {
     private:
     std::unordered_map<std::string, std::atomic_uint_fast32_t> statistics;
     std::unique_ptr<std::thread> t_t;
@@ -47,7 +49,7 @@ struct InterfacesStatisticsThread {
     volatile std::atomic_bool capture_stop_ctl = false;
 
     public:
-    InterfacesStatisticsThread() = default;
+    InterfacesActivityThread() = default;
 
     bool start_blocked() {
         std::string cmd = DUMPCAP_PATH " -S -M";
@@ -72,8 +74,9 @@ struct InterfacesStatisticsThread {
                 std::lock_guard<std::mutex> lock(t_m);
                 if (is_operating) {
                     LOG_F(ERROR, "ERROR: In running. Please stop first");
-                    return std::async(
-                        std::launch::deferred, []() { return false; });
+                    return std::async(std::launch::deferred, []() {
+                        return false;
+                    });
                 }
             }
             t_t->join();
@@ -95,7 +98,9 @@ struct InterfacesStatisticsThread {
         std::future<bool> ret;
         if (!is_operating) {
             LOG_F(ERROR, "ERROR: Not in running. Nothing to stop.");
-            return std::async(std::launch::deferred, []() { return false; });
+            return std::async(std::launch::deferred, []() {
+                return false;
+            });
         }
         this->capture_stop_ctl = true;
         stop_status = std::promise<bool>();
@@ -131,7 +136,7 @@ struct InterfacesStatisticsThread {
         return ret;
     }
 
-    static void thread(InterfacesStatisticsThread *const tobj) {
+    static void thread(InterfacesActivityThread *const tobj) {
         {
             std::lock_guard<std::mutex> lock(tobj->t_m);
             tobj->is_operating = true;
@@ -148,7 +153,7 @@ struct InterfacesStatisticsThread {
         }
     }
 
-    ~InterfacesStatisticsThread() {
+    ~InterfacesActivityThread() {
         if (t_t) {
             if (is_operating) {
                 stop().wait();

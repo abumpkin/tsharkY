@@ -34,6 +34,11 @@ function(load_3rd tar)
     endif()
 endfunction()
 
+# tinyxml2
+set(BUILD_TESTING OFF)
+set(tinyxml2_BUILD_TESTING OFF CACHE BOOL "tinyxml2 build test")
+add_subdirectory(3rd/tinyxml2)
+load_3rd(tinyxml2)
 
 # loguru
 add_subdirectory(3rd/loguru)
