@@ -1,108 +1,60 @@
+/**
+ * @file tshark_manager.h
+ * @author abumpkin (forwardslash@foxmail.com)
+ *
+ * ISC License
+ *
+ * @copyright Copyright (c) 2025 abumpkin
+ *
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
+
 #pragma once
 #include "boost/filesystem/operations.hpp"
 #include "boost/filesystem/path.hpp"
 #include "mutils.h"
-#include "rapidjson/allocators.h"
+#include "traffic_statistics.h"
+#include "tshark_info.h"
 #include "unistream.h"
+#include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <future>
 #include <loguru.hpp>
 #include <memory>
+#include <mutex>
 #include <rapidjson/document.h>
 #include <rapidjson/prettywriter.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
+#include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
-struct TSharkManager;
-
-struct Packet {
-    uint32_t frame_number;
-    uint32_t frame_offset;
-    uint32_t frame_caplen;
-    std::string frame_timestamp;
-    std::string frame_protocol;
-    std::string frame_info;
-    std::string src_location;
-    std::string dst_location;
-    std::string src_mac;
-    std::string dst_mac;
-    std::string src_ip;
-    std::string dst_ip;
-    uint16_t src_port;
-    uint16_t dst_port;
-    std::string data;
-
-    uint32_t load_data(
-        std::shared_ptr<UniStreamInterface> stream, uint32_t len) {
-        char buf[512];
-        uint32_t rd = 0, ret = 0;
-        while (!stream->read_eof() && ret < len) {
-            rd = len - ret;
-            if (rd > sizeof(buf)) rd = sizeof(buf);
-            rd = stream->read(buf, rd);
-            if (rd) data.append(buf, rd);
-            ret += rd;
-        }
-        return ret;
-    }
-
-    rapidjson::Value to_json_obj(rapidjson::MemoryPoolAllocator<> &allocator) {
-        rapidjson::Value pkt_obj;
-        pkt_obj.SetObject();
-        pkt_obj.AddMember("frame_number", frame_number, allocator);
-        pkt_obj.AddMember("frame_offset", frame_offset, allocator);
-        pkt_obj.AddMember("frame_caplen", frame_caplen, allocator);
-        pkt_obj.AddMember("frame_timestamp",
-            rapidjson::Value(frame_timestamp.c_str(), allocator), allocator);
-        pkt_obj.AddMember("frame_protocol",
-            rapidjson::Value(frame_protocol.c_str(), allocator), allocator);
-        pkt_obj.AddMember("frame_info",
-            rapidjson::Value(frame_info.c_str(), allocator), allocator);
-        pkt_obj.AddMember("src_location",
-            rapidjson::Value(src_location.c_str(), allocator), allocator);
-        pkt_obj.AddMember("dst_location",
-            rapidjson::Value(dst_location.c_str(), allocator), allocator);
-        pkt_obj.AddMember(
-            "src_mac", rapidjson::Value(src_mac.c_str(), allocator), allocator);
-        pkt_obj.AddMember(
-            "dst_mac", rapidjson::Value(dst_mac.c_str(), allocator), allocator);
-        pkt_obj.AddMember(
-            "src_ip", rapidjson::Value(src_ip.c_str(), allocator), allocator);
-        pkt_obj.AddMember(
-            "dst_ip", rapidjson::Value(dst_ip.c_str(), allocator), allocator);
-        pkt_obj.AddMember("src_port", src_port, allocator);
-        pkt_obj.AddMember("dst_port", dst_port, allocator);
-        return pkt_obj;
-    }
-
-    std::string to_json(bool pretty = false) {
-        rapidjson::MemoryPoolAllocator<> allocator;
-        rapidjson::Value json_obj = to_json_obj(allocator);
-        rapidjson::StringBuffer json_data;
-        std::string ret;
-        if (pretty) {
-            rapidjson::PrettyWriter<rapidjson::StringBuffer> writer =
-                rapidjson::PrettyWriter(json_data);
-            json_obj.Accept(writer);
-            ret = json_data.GetString();
-        }
-        else {
-            rapidjson::Writer<rapidjson::StringBuffer> writer =
-                rapidjson::Writer(json_data);
-            json_obj.Accept(writer);
-            ret = json_data.GetString();
-        }
-        return ret;
-    }
-};
+class TSharkManager;
+struct SharkCaptureThread;
 
 struct SharkLoader {
+    enum class PKT_PARSE_STAT { PARSE_CONTINUE, PARSE_ERROR, PARSE_STOP };
+    using PacketHandler =
+        std::function<PKT_PARSE_STAT(std::shared_ptr<Packet>)>;
+
     protected:
-    friend TSharkManager;
+    friend SharkCaptureThread;
     struct CMD_Fields {
         char const *frame_number = "frame.number";
         char const *frame_timestamp = "frame.time_epoch";
@@ -117,17 +69,16 @@ struct SharkLoader {
         char const *udp_port = "udp.port";
         char const *tcp_port = "tcp.port";
     };
-    using PacketHandler = std::function<void(std::shared_ptr<Packet>)>;
     constexpr static const uint32_t CMD_FIELD_NUM =
         sizeof(CMD_Fields) / sizeof(char const *);
 
-    static bool parse_fields(std::string const &info,
+    static PKT_PARSE_STAT pkt_pase_routine(std::string const &info,
         std::shared_ptr<Packet> packet, PacketHandler handler) {
         std::vector<std::string> fields;
         CMD_Fields cmd_field;
         fields = utils_split_str(info, "\t");
         if (fields.size() < CMD_FIELD_NUM) {
-            return false;
+            return PKT_PARSE_STAT::PARSE_ERROR;
         }
         for (uint32_t i = 0; i < CMD_FIELD_NUM; i++) {
             reinterpret_cast<char const **>(&cmd_field)[i] = "";
@@ -168,14 +119,15 @@ struct SharkLoader {
 
         // 其他处理
         if (handler) {
-            handler(packet);
+            return handler(packet);
         }
-        return true;
+        return PKT_PARSE_STAT::PARSE_CONTINUE;
     }
 
     static std::shared_ptr<UniStreamInterface> create_parser_stream() {
         CMD_Fields cmd_field;
-        std::vector<std::string> cmd_args = {"tshark -Q -l -r - -T fields"};
+        std::vector<std::string> cmd_args = {
+            TSHARK_PATH " -Q -l -r - -T fields"};
         for (uint32_t i = 0; i < CMD_FIELD_NUM; i++) {
             cmd_args.push_back("-e");
             cmd_args.push_back(reinterpret_cast<char const **>(&cmd_field)[i]);
@@ -237,7 +189,7 @@ struct SharkPcapngLoader : SharkLoader {
         EnhancedPacketBlockHeader packet_section;
         char *p_section = reinterpret_cast<char *>(&section);
         uint32_t rd_len;
-        bool right_fomat = false;
+        bool right_format = false;
         while (bin_stream->read(p_section, sizeof(section))) {
             if (section.block_type == 0x0a0d0d0a ||
                 section.block_type == 0x00000001) {
@@ -257,10 +209,10 @@ struct SharkPcapngLoader : SharkLoader {
                     return false;
                 }
                 LOG_F(INFO, "pcapng found Pcapng Header Block!");
-                right_fomat = true;
+                right_format = true;
                 continue;
             }
-            if (!right_fomat) {
+            if (!right_format) {
                 std::vector<char> header(sizeof(GeneralHeader));
                 memcpy(header.data(), reinterpret_cast<char *>(&section),
                     header.size());
@@ -293,13 +245,17 @@ struct SharkPcapngLoader : SharkLoader {
                     LOG_F(ERROR, "pcapng wrong format");
                     return false;
                 }
-                std::string explain = parser_stream->read_util('\n');
-                if (!parse_fields(explain, pkt, handler)) {
+                std::string explain = parser_stream->read_until('\n');
+                PKT_PARSE_STAT stat = pkt_pase_routine(explain, pkt, handler);
+                if (stat == PKT_PARSE_STAT::PARSE_ERROR) {
                     LOG_F(ERROR, "ERROR: packet parse failure.");
                     return false;
                 }
                 packets_list.push_back(pkt);
                 packets.emplace(pkt->frame_number, pkt);
+                if (stat == PKT_PARSE_STAT::PARSE_STOP) {
+                    return true;
+                }
                 continue;
             }
             rd_len = bin_stream->read_to_null(
@@ -357,22 +313,37 @@ struct SharkPcapLoader : SharkLoader {
                 LOG_F(ERROR, "pcapng wrong format");
                 return false;
             }
-            std::string explain = parser_stream->read_util('\n');
-            if (!parse_fields(explain, pkt, handler)) {
+            std::string explain = parser_stream->read_until('\n');
+            PKT_PARSE_STAT stat = pkt_pase_routine(explain, pkt, handler);
+            if (stat == PKT_PARSE_STAT::PARSE_ERROR) {
                 LOG_F(ERROR, "ERROR: packet parse failure.");
                 return false;
             }
             packets_list.push_back(pkt);
             packets.emplace(pkt->frame_number, pkt);
+            if (stat == PKT_PARSE_STAT::PARSE_STOP) {
+                return true;
+            }
         }
         return true;
     }
 };
 
-struct TSharkManager {
-    std::unique_ptr<SharkLoader> loader;
+struct SharkCaptureThread {
+    std::shared_ptr<SharkLoader> loader;
 
-    TSharkManager() {}
+    private:
+    std::unique_ptr<std::thread> t_t;
+    std::condition_variable t_cv;
+    std::mutex t_m;
+    std::promise<bool> start_status;
+    std::promise<bool> stop_status;
+    volatile std::atomic_bool is_capturing = false;
+    volatile std::atomic_bool is_done_with_succeed = false;
+    volatile std::atomic_bool capture_stop_ctl = false;
+
+    public:
+    SharkCaptureThread() = default;
 
     bool load_capture_file(boost::filesystem::path path) {
         std::string ext = path.extension().generic_string();
@@ -383,10 +354,10 @@ struct TSharkManager {
             return false;
         }
         if (ext == ".pcap") {
-            loader = std::make_unique<SharkPcapLoader>();
+            loader = std::make_shared<SharkPcapLoader>();
         }
         else if (ext == ".pcapng") {
-            loader = std::make_unique<SharkPcapngLoader>();
+            loader = std::make_shared<SharkPcapngLoader>();
         }
         else {
             LOG_F(ERROR, "ERROR: (%s) Unkown file format. (%s)", ext.c_str(),
@@ -398,11 +369,14 @@ struct TSharkManager {
         return true;
     }
 
-    // TODO: 线程运行，notify() 通知进行线程管理。
-    bool start_capture(boost::filesystem::path save_to = "",
-        SharkLoader::PacketHandler handler = nullptr) {
+    bool start_capture_blocked(boost::filesystem::path save_to = "",
+        SharkLoader::PacketHandler handler = nullptr,
+        std::string if_name = "") {
         std::shared_ptr<UniStreamInterface> stream;
-        std::string cmd = "dumpcap -Q -w -";
+        std::string cmd = DUMPCAP_PATH " -Q -w -";
+        if (!if_name.empty()) {
+            cmd += " -i " + if_name;
+        }
         if (!save_to.empty()) {
             save_to = utils_test_valid_filename(save_to);
             if (save_to.empty()) {
@@ -412,11 +386,11 @@ struct TSharkManager {
             }
             std::string ext = save_to.extension().generic_string();
             if (ext == ".pcap") {
-                loader = std::make_unique<SharkPcapLoader>();
+                loader = std::make_shared<SharkPcapLoader>();
                 cmd += " -F pcap";
             }
             else if (ext == ".pcapng") {
-                loader = std::make_unique<SharkPcapngLoader>();
+                loader = std::make_shared<SharkPcapngLoader>();
             }
             else {
                 LOG_F(ERROR,
@@ -439,12 +413,226 @@ struct TSharkManager {
                     save_to.generic_string(), std::ios::trunc));
         }
         if (!loader) {
-            loader = std::make_unique<SharkPcapngLoader>();
+            loader = std::make_shared<SharkPcapngLoader>();
         }
         if (!stream) {
             stream = std::make_shared<UniStreamPipe>(cmd);
         }
         loader->load(stream, handler);
         return true;
+    }
+
+    std::future<bool> start_capture(boost::filesystem::path save_to = "",
+        SharkLoader::PacketHandler handler = nullptr,
+        std::string const &if_name = "") {
+        std::future<bool> ret;
+        if (t_t) {
+            {
+                std::lock_guard<std::mutex> lock(t_m);
+                if (is_capturing) {
+                    LOG_F(ERROR,
+                        "ERROR: Thread create fail. Capture thread already in "
+                        "running.");
+                    return std::async(
+                        std::launch::deferred, []() { return false; });
+                }
+            }
+            t_t->join();
+        }
+        {
+            std::lock_guard<std::mutex> lock(t_m);
+            this->is_capturing = false;
+            this->capture_stop_ctl = false;
+            this->is_done_with_succeed = false;
+            start_status = std::promise<bool>();
+            ret = start_status.get_future();
+        }
+        t_t = std::make_unique<std::thread>(
+            thread, this, save_to, handler, if_name);
+        return ret;
+    }
+
+    std::future<bool> stop_capture() {
+        std::lock_guard<std::mutex> lock(t_m);
+        std::future<bool> ret;
+        if (!is_capturing) {
+            LOG_F(ERROR,
+                "ERROR: Not in capturing. There is no need to stop capture.");
+            return std::async(std::launch::deferred, []() { return false; });
+        }
+        this->capture_stop_ctl = true;
+        stop_status = std::promise<bool>();
+        ret = stop_status.get_future();
+        return ret;
+    }
+
+    bool capturing_status() {
+        std::lock_guard<std::mutex> lock(t_m);
+        return is_capturing;
+    }
+    bool capture_done_with_succeed() noexcept(false) {
+        if (capturing_status()) {
+            LOG_F(ERROR, "ERROR: Capture thread in running.");
+            throw std::runtime_error("Capture Thread in running.");
+        }
+        if (!t_t) {
+            LOG_F(ERROR, "ERROR: Capture thread never been run.");
+            throw std::runtime_error("Capture Thread never been run.");
+        }
+        return is_done_with_succeed;
+    }
+
+    static void thread(SharkCaptureThread *const tobj,
+        boost::filesystem::path save_to = "",
+        SharkLoader::PacketHandler handler = nullptr,
+        std::string if_name = "") {
+        {
+            std::lock_guard<std::mutex> lock(tobj->t_m);
+            tobj->is_capturing = true;
+            tobj->start_status.set_value(true);
+        }
+        tobj->is_done_with_succeed = tobj->start_capture_blocked(
+            save_to,
+            [&](std::shared_ptr<Packet> p) {
+                {
+                    std::lock_guard<std::mutex> lock(tobj->t_m);
+                    if (tobj->capture_stop_ctl)
+                        return SharkLoader::PKT_PARSE_STAT::PARSE_STOP;
+                }
+                if (handler) return handler(p);
+                return SharkLoader::PKT_PARSE_STAT::PARSE_CONTINUE;
+            },
+            if_name);
+        {
+            std::lock_guard<std::mutex> lock(tobj->t_m);
+            tobj->is_capturing = false;
+            if (tobj->capture_stop_ctl) {
+                tobj->capture_stop_ctl = false;
+                tobj->stop_status.set_value(true);
+            }
+        }
+    }
+
+    ~SharkCaptureThread() {
+        if (t_t) {
+            if (is_capturing) {
+                stop_capture().wait();
+            }
+            if (t_t->joinable()) {
+                t_t->join();
+            }
+        }
+    }
+};
+
+class TSharkManager {
+
+    enum class CTLSIG : uint32_t {
+        NO_ACTION = 0,
+        START_CAPTURE,
+
+    } ctl_thread_sig;
+
+    SharkCaptureThread capture_thread;
+    InterfacesStatisticsThread statistics_thread;
+    std::condition_variable ctl_cv;
+    std::mutex ctl_m;
+
+    public:
+    TSharkManager() {}
+    static void thread(TSharkManager *const manager) {
+        std::unique_lock<std::mutex> lock(manager->ctl_m);
+        manager->ctl_cv.wait(lock,
+            [&]() { return manager->ctl_thread_sig != CTLSIG::NO_ACTION; });
+        switch (manager->ctl_thread_sig) {
+        case CTLSIG::START_CAPTURE:
+            break;
+        default:
+            break;
+        }
+        manager->ctl_thread_sig = CTLSIG::NO_ACTION;
+    }
+
+    std::future<bool> capture_start(boost::filesystem::path save_to = "",
+        SharkLoader::PacketHandler handler = nullptr,
+        std::string const &if_name = "") {
+        return capture_thread.start_capture(save_to, handler, if_name);
+    }
+
+    std::future<bool> capture_stop() { return capture_thread.stop_capture(); }
+
+    std::future<std::weak_ptr<SharkLoader>> capture_from_file(
+        boost::filesystem::path path) {
+        return std::async(
+            std::launch::async, [&]() -> std::weak_ptr<SharkLoader> {
+                capture_thread.load_capture_file(path);
+                return capture_thread.loader;
+            });
+    }
+
+    std::future<bool> capture_is_running() {
+        return std::async(std::launch::deferred,
+            [&]() { return capture_thread.capturing_status(); });
+    }
+
+    std::future<std::vector<IfaceInfo>> interfaces_get_info() {
+        return std::async(std::launch::async, [&]() {
+            std::vector<IfaceInfo> ret;
+            auto pipe = UniStreamPipe(DUMPCAP_PATH " -M -D");
+            std::string json_str = pipe.read_until_eof();
+            rapidjson::Document doc;
+            doc.Parse(json_str.c_str(), json_str.size());
+
+            if (doc.HasParseError() || !doc.IsArray()) {
+                LOG_F(ERROR, "ERROR: Get interfaces info failed!");
+                return ret;
+            }
+
+            for (auto &i : doc.GetArray()) {
+                IfaceInfo info;
+                if (i.IsObject() && i.MemberCount()) {
+                    info.name = i.MemberBegin()->name.GetString();
+                    rapidjson::Value &val = i.MemberBegin()->value;
+                    if (val.IsObject()) {
+                        if (val.HasMember("friendly_name") &&
+                            val["friendly_name"].IsString()) {
+                            info.friendly_name =
+                                val["friendly_name"].GetString();
+                        }
+                        if (val.HasMember("type") && val["type"].IsNumber()) {
+                            info.type = static_cast<InterfaceType>(
+                                val["type"].GetInt());
+                        }
+                        if (val.HasMember("addrs") && val["addrs"].IsArray()) {
+                            for (auto &p : val["addrs"].GetArray()) {
+                                info.addrs.push_back(p.GetString());
+                            }
+                        }
+                    }
+                }
+                ret.push_back(info);
+            }
+
+            return ret;
+        });
+    }
+
+    std::future<bool> interfaces_traffic_monitor_start() {
+        return statistics_thread.start();
+    }
+
+    std::future<bool> interfaces_traffic_monitor_stop() {
+        return statistics_thread.stop();
+    }
+
+    std::future<bool> interfaces_traffic_monitor_is_running() {
+        return std::async(std::launch::deferred,
+            [&]() { return statistics_thread.operating_status(); });
+    }
+
+    std::future<std::unordered_map<std::string, uint32_t>>
+    interfaces_traffic_monitor_read() {
+        return std::async(
+            std::launch::deferred, [&]() { return statistics_thread.read(); });
     }
 };

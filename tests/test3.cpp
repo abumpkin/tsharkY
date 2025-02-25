@@ -62,7 +62,7 @@ int main() {
     // pipe.write_eof();
     std::string cmd;
     while (!pipe->read_eof()) {
-        cmd = pipe->read_util('\n');
+        cmd = pipe->read_until('\n');
         std::cout << cmd;
     }
     // auto file2 = std::make_shared<UniStreamFile>("dump_data/out.txt",
