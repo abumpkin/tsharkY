@@ -1,6 +1,7 @@
 /**
  * @file unistream.h
  * @author abumpkin (forwardslash@foxmail.com)
+ * @link https://github.com/abumpkin/tsharkY @endlink
  *
  * ISC License
  *
@@ -108,7 +109,7 @@ struct UniStreamInterface {
     }
 };
 
-class UniStreamPipeUnblocked : public UniStreamInterface {
+class UniStreamPipeUnblocked : virtual public UniStreamInterface {
     boost::asio::io_context ctx;
     boost::asio::readable_pipe rp;
     boost::asio::writable_pipe wp;
@@ -148,6 +149,9 @@ class UniStreamPipeUnblocked : public UniStreamInterface {
         }
         p->rp.close();
     }
+
+    protected:
+    UniStreamPipeUnblocked() : rp(ctx), wp(ctx), stream(&read_buf) {}
 
     public:
     UniStreamPipeUnblocked(std::string cmd)
@@ -217,7 +221,7 @@ class UniStreamPipeUnblocked : public UniStreamInterface {
     }
 };
 
-class UniStreamPipe : public UniStreamInterface {
+class UniStreamPipe : virtual public UniStreamInterface {
     boost::asio::io_context ctx;
     boost::asio::readable_pipe rp;
     boost::asio::writable_pipe wp;
@@ -303,7 +307,7 @@ class UniStreamPipe : public UniStreamInterface {
 /**
  * @brief 一个对象只能单独读或单独写
  */
-class UniStreamFile : public UniStreamInterface {
+class UniStreamFile : virtual public UniStreamInterface {
     std::fstream f;
     volatile size_t r_pos, w_pos;
 
@@ -349,7 +353,7 @@ class UniStreamFile : public UniStreamInterface {
     }
 };
 
-class UniStreamMemory : public UniStreamInterface {
+class UniStreamMemory : virtual public UniStreamInterface {
     std::unique_ptr<boost::asio::streambuf> mem;
     std::unique_ptr<std::iostream> f;
     volatile size_t r_pos, w_pos;
@@ -385,7 +389,7 @@ class UniStreamMemory : public UniStreamInterface {
     }
 };
 
-class UniSyncR2W : public UniStreamInterface {
+class UniSyncR2W : virtual public UniStreamInterface {
     std::shared_ptr<UniStreamInterface> r;
     std::shared_ptr<UniStreamInterface> w;
     using _T = std::shared_ptr<UniSyncR2W>;

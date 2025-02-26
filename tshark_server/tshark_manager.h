@@ -1,6 +1,7 @@
 /**
  * @file tshark_manager.h
  * @author abumpkin (forwardslash@foxmail.com)
+ * @link https://github.com/abumpkin/tsharkY @endlink
  *
  * ISC License
  *
@@ -23,6 +24,7 @@
 #include "boost/filesystem/operations.hpp"
 #include "boost/filesystem/path.hpp"
 #include "mutils.h"
+#include "parser_stream.h"
 #include "traffic_statistics.h"
 #include "tshark_info.h"
 #include "unistream.h"
@@ -33,6 +35,7 @@
 #include <cstring>
 #include <functional>
 #include <future>
+#include <initializer_list>
 #include <loguru.hpp>
 #include <memory>
 #include <mutex>
@@ -50,99 +53,11 @@ class TSharkManager;
 struct SharkCaptureThread;
 
 struct SharkLoader {
-    enum class PKT_TREATMENT {
-        PKT_DROP,
-        PKT_SAVE,
-        PKT_ERROR
-    };
-    using PacketHandler = std::function<PKT_TREATMENT(std::shared_ptr<Packet>)>;
-
     protected:
     volatile std::atomic_bool stop_ctl = false;
-    struct CMD_Fields {
-        char const *frame_number = "frame.number";
-        char const *frame_timestamp = "frame.time_epoch";
-        char const *frame_protocol = "_ws.col.Protocol";
-        char const *frame_info = "_ws.col.Info";
-        char const *eth_src = "eth.src";
-        char const *eth_dst = "eth.dst";
-        char const *ip_src = "ip.src";
-        char const *ip_dst = "ip.dst";
-        char const *ipv6_src = "ipv6.src";
-        char const *ipv6_dst = "ipv6.dst";
-        char const *udp_port = "udp.port";
-        char const *tcp_port = "tcp.port";
-    };
-    constexpr static const uint32_t CMD_FIELD_NUM =
-        sizeof(CMD_Fields) / sizeof(char const *);
-
-    static PKT_TREATMENT pkt_pase_routine(std::string const &info,
-        std::shared_ptr<Packet> packet, PacketHandler handler) {
-        std::vector<std::string> fields;
-        CMD_Fields cmd_field;
-        fields = utils_split_str(info, "\t");
-        if (fields.size() < CMD_FIELD_NUM) {
-            return PKT_TREATMENT::PKT_ERROR;
-        }
-        for (uint32_t i = 0; i < CMD_FIELD_NUM; i++) {
-            reinterpret_cast<char const **>(&cmd_field)[i] = "";
-            if (i < fields.size())
-                reinterpret_cast<char const **>(&cmd_field)[i] =
-                    fields[i].c_str();
-        }
-
-        // frame
-        packet->frame_number = strlen(cmd_field.frame_number)
-                                   ? std::stoi(cmd_field.frame_number)
-                                   : 0;
-        packet->frame_timestamp = cmd_field.frame_timestamp;
-        packet->frame_protocol = cmd_field.frame_protocol;
-        packet->frame_info = cmd_field.frame_info;
-        // MAC
-        packet->src_mac = cmd_field.eth_src;
-        packet->dst_mac = cmd_field.eth_dst;
-        // IP
-        packet->src_ip =
-            strlen(cmd_field.ip_src) ? cmd_field.ip_src : cmd_field.ipv6_src;
-        packet->dst_ip =
-            strlen(cmd_field.ip_dst) ? cmd_field.ip_dst : cmd_field.ipv6_dst;
-        // 端口
-        std::string src_dst_port = strlen(cmd_field.tcp_port)
-                                       ? cmd_field.tcp_port
-                                       : cmd_field.udp_port;
-        if (!src_dst_port.empty()) {
-            std::vector<std::string> ports = utils_split_str(src_dst_port, ",");
-            if (ports.size() == 2) {
-                packet->src_port = static_cast<uint16_t>(std::stoi(ports[0]));
-                packet->dst_port = static_cast<uint16_t>(std::stoi(ports[1]));
-            }
-        }
-        // 归属地
-        packet->src_location = utils_ip2region(packet->src_ip);
-        packet->dst_location = utils_ip2region(packet->dst_ip);
-
-        // 其他处理
-        if (handler) {
-            return handler(packet);
-        }
-        return PKT_TREATMENT::PKT_SAVE;
-    }
-
-    static std::shared_ptr<UniStreamInterface> create_parser_stream() {
-        CMD_Fields cmd_field;
-        std::vector<std::string> cmd_args = {
-            TSHARK_PATH " -Q -l -r - -T fields"};
-        for (uint32_t i = 0; i < CMD_FIELD_NUM; i++) {
-            cmd_args.push_back("-e");
-            cmd_args.push_back(reinterpret_cast<char const **>(&cmd_field)[i]);
-        }
-        auto parser = std::make_shared<UniStreamPipeUnblocked>(
-            utils_join_str(cmd_args, " "));
-        return parser;
-    }
 
     public:
-    SharkLoader() = default;
+    SharkLoader() = delete;
     SharkLoader(SharkLoader &) = delete;
     SharkLoader &operator=(SharkLoader &) = delete;
     SharkLoader(SharkLoader &&) = delete;
@@ -150,10 +65,25 @@ struct SharkLoader {
     std::vector<char> fixed_data;
     std::vector<std::shared_ptr<Packet>> packets_list;
     std::unordered_map<uint32_t, std::shared_ptr<Packet>> packets;
+    std::shared_ptr<UniStreamInterface> parser_stream;
+    std::vector<std::shared_ptr<ParserStream>> parsers;
+    std::shared_ptr<UniStreamInterface> in_stream;
 
-    virtual bool load(
-        std::shared_ptr<UniStreamInterface>, PacketHandler = nullptr) {
+    SharkLoader(std::shared_ptr<UniStreamInterface> stream)
+        : in_stream(stream) {}
+
+    template <typename... T>
+    void register_parser_streams(T const &...parsers) {
+        this->parsers =
+            std::initializer_list<std::shared_ptr<ParserStream>>{parsers...};
+        parser_stream = UniSyncR2W::Make(in_stream, parsers...);
+    }
+
+    virtual bool load() {
         stop_ctl = false;
+        if (!this->parser_stream) {
+            this->parser_stream = this->in_stream;
+        }
         return false;
     }
 
@@ -192,17 +122,19 @@ struct SharkPcapngLoader : SharkLoader {
         uint32_t original_packet_length;
     };
 
-    virtual bool load(std::shared_ptr<UniStreamInterface> stream,
-        PacketHandler handler = nullptr) override {
-        SharkLoader::load(stream, handler);
-        auto parser_stream = create_parser_stream();
-        auto bin_stream = UniSyncR2W::Make(stream, parser_stream);
+    SharkPcapngLoader(std::shared_ptr<UniStreamInterface> stream)
+        : SharkLoader(stream) {}
+
+    virtual bool load() override {
+        SharkLoader::load();
+        auto bin_stream = this->parser_stream;
         GeneralHeader section;
         EnhancedPacketBlockHeader packet_section;
         char *p_section = reinterpret_cast<char *>(&section);
         uint32_t rd_len;
         bool right_format = false;
         std::future<uint32_t> read_len;
+        std::vector<char> buf;
         while (true) {
             read_len = bin_stream->read_async(p_section, sizeof(section));
             do {
@@ -244,7 +176,12 @@ struct SharkPcapngLoader : SharkLoader {
                 return false;
             }
             if (section.block_type == 0x00000006) {
-                std::shared_ptr<Packet> pkt = std::make_shared<Packet>();
+                uint32_t cap_off, cap_len;
+                while (buf.capacity() < section.block_length) {
+                    if (buf.capacity() == 0) buf.reserve(section.block_length);
+                    buf.reserve(buf.capacity() << 1);
+                }
+                buf.resize(section.block_length);
                 packet_section.block_info = section;
                 rd_len = bin_stream->read(
                     reinterpret_cast<char *>(&packet_section.interface_id),
@@ -253,30 +190,24 @@ struct SharkPcapngLoader : SharkLoader {
                     LOG_F(ERROR, "pcapng wrong format");
                     return false;
                 }
-                pkt->frame_offset = bin_stream->read_offset();
-                pkt->frame_caplen = packet_section.captured_packet_length;
-                rd_len = pkt->load_data(bin_stream, pkt->frame_caplen);
-                int64_t tail_size =
-                    static_cast<uint64_t>(section.block_length) -
-                    sizeof(EnhancedPacketBlockHeader) - pkt->frame_caplen;
-                if (tail_size < 0) {
+                cap_off = sizeof(EnhancedPacketBlockHeader);
+                cap_len = packet_section.captured_packet_length;
+                memcpy(buf.data(), &packet_section, cap_off);
+                rd_len = bin_stream->read(
+                    buf.data() + cap_off, section.block_length - cap_off);
+
+                if (rd_len != section.block_length - cap_off) {
                     LOG_F(ERROR, "pcapng wrong format");
                     return false;
                 }
-                rd_len = bin_stream->read_to_null(tail_size);
-                if (!rd_len) {
-                    LOG_F(ERROR, "pcapng wrong format");
-                    return false;
+                try {
+                    for (auto const &i : parsers) {
+                        i->packet_arrived(fixed_data, buf, cap_off, cap_len);
+                    }
                 }
-                std::string explain = parser_stream->read_until('\n');
-                PKT_TREATMENT stat = pkt_pase_routine(explain, pkt, handler);
-                if (stat == PKT_TREATMENT::PKT_ERROR) {
-                    LOG_F(ERROR, "ERROR: packet parse failure.");
+                catch (...) {
+                    LOG_F(ERROR, "parse failure");
                     return false;
-                }
-                if (stat == PKT_TREATMENT::PKT_SAVE) {
-                    packets_list.push_back(pkt);
-                    packets.emplace(pkt->frame_number, pkt);
                 }
                 continue;
             }
@@ -309,11 +240,12 @@ struct SharkPcapLoader : SharkLoader {
         uint32_t len;
     };
 
-    virtual bool load(std::shared_ptr<UniStreamInterface> stream,
-        PacketHandler handler = nullptr) override {
-        SharkLoader::load(stream, handler);
-        auto parser_stream = create_parser_stream();
-        auto bin_stream = UniSyncR2W::Make(stream, parser_stream);
+    SharkPcapLoader(std::shared_ptr<UniStreamInterface> stream)
+        : SharkLoader(stream) {}
+
+    virtual bool load() override {
+        SharkLoader::load();
+        auto bin_stream = parser_stream;
         PcapPacketHeader section;
         char *p_section = reinterpret_cast<char *>(&section);
         fixed_data.resize(sizeof(PcapHeader));
@@ -328,6 +260,7 @@ struct SharkPcapLoader : SharkLoader {
         }
         uint32_t rd_len;
         std::future<uint32_t> read_len;
+        std::vector<char> buf;
         while (true) {
             read_len =
                 bin_stream->read_async(p_section, sizeof(PcapPacketHeader));
@@ -341,23 +274,31 @@ struct SharkPcapLoader : SharkLoader {
             rd_len = read_len.get();
             if (!rd_len) return false;
 
-            std::shared_ptr<Packet> pkt = std::make_shared<Packet>();
-            pkt->frame_offset = bin_stream->read_offset();
-            pkt->frame_caplen = section.caplen;
-            rd_len = pkt->load_data(bin_stream, pkt->frame_caplen);
-            if (rd_len != pkt->frame_caplen) {
+            uint32_t cap_off, cap_len;
+            uint32_t block_len = sizeof(PcapPacketHeader) + section.caplen;
+            while (buf.capacity() < block_len) {
+                if (buf.capacity() == 0) buf.reserve(block_len);
+                buf.reserve(buf.capacity() << 1);
+            }
+            buf.resize(block_len);
+            cap_off = sizeof(PcapPacketHeader);
+            cap_len = section.caplen;
+            memcpy(buf.data(), p_section, cap_off);
+            rd_len =
+                bin_stream->read(buf.data() + cap_off, block_len - cap_off);
+
+            if (rd_len != block_len - cap_off) {
                 LOG_F(ERROR, "pcapng wrong format");
                 return false;
             }
-            std::string explain = parser_stream->read_until('\n');
-            PKT_TREATMENT stat = pkt_pase_routine(explain, pkt, handler);
-            if (stat == PKT_TREATMENT::PKT_ERROR) {
-                LOG_F(ERROR, "ERROR: packet parse failure.");
-                return false;
+            try {
+                for (auto const &i : parsers) {
+                    i->packet_arrived(fixed_data, buf, cap_off, cap_len);
+                }
             }
-            if (stat == PKT_TREATMENT::PKT_SAVE) {
-                packets_list.push_back(pkt);
-                packets.emplace(pkt->frame_number, pkt);
+            catch (...) {
+                LOG_F(ERROR, "parse failure");
+                return false;
             }
         }
         return true;
@@ -365,6 +306,7 @@ struct SharkPcapLoader : SharkLoader {
 };
 
 struct SharkCaptureThread {
+    using LoaderConfig = std::function<void(std::shared_ptr<SharkLoader>)>;
     std::shared_ptr<SharkLoader> loader;
 
     private:
@@ -379,7 +321,7 @@ struct SharkCaptureThread {
     public:
     SharkCaptureThread() = default;
 
-    bool load_capture_file(boost::filesystem::path path) {
+    bool load_capture_file(boost::filesystem::path path, LoaderConfig config) {
         std::string ext = path.extension().generic_string();
         utils_str_lowcase(ext);
         if (!boost::filesystem::exists(path)) {
@@ -387,25 +329,25 @@ struct SharkCaptureThread {
                 boost::filesystem::absolute(path).c_str());
             return false;
         }
-        if (ext == ".pcap") {
-            loader = std::make_shared<SharkPcapLoader>();
-        }
-        else if (ext == ".pcapng") {
-            loader = std::make_shared<SharkPcapngLoader>();
-        }
-        else {
+        if (ext != ".pcap" && ext != ".pcapng") {
             LOG_F(ERROR, "ERROR: (%s) Unkown file format. (%s)", ext.c_str(),
                 boost::filesystem::absolute(path).c_str());
             return false;
         }
         auto stream = std::make_shared<UniStreamFile>(path.generic_string());
-        loader->load(stream);
+        if (ext == ".pcap") {
+            loader = std::make_shared<SharkPcapLoader>(stream);
+        }
+        else if (ext == ".pcapng") {
+            loader = std::make_shared<SharkPcapngLoader>(stream);
+        }
+        if (config) config(loader);
+        loader->load();
         return true;
     }
 
-    bool start_capture_blocked(boost::filesystem::path save_to = "",
-        SharkLoader::PacketHandler handler = nullptr,
-        std::string if_name = "") {
+    bool start_capture_blocked(LoaderConfig config, std::string if_name = "",
+        boost::filesystem::path save_to = "") {
         std::shared_ptr<UniStreamInterface> stream;
         std::string cmd = DUMPCAP_PATH " -Q -w -";
         if (!if_name.empty()) {
@@ -419,14 +361,7 @@ struct SharkCaptureThread {
                 return false;
             }
             std::string ext = save_to.extension().generic_string();
-            if (ext == ".pcap") {
-                loader = std::make_shared<SharkPcapLoader>();
-                cmd += " -F pcap";
-            }
-            else if (ext == ".pcapng") {
-                loader = std::make_shared<SharkPcapngLoader>();
-            }
-            else {
+            if (ext != ".pcap" && ext != ".pcapng") {
                 LOG_F(ERROR,
                     "ERROR: (%s) Please specify a supported save format. "
                     "\".pcap\" or \".pcapng\".",
@@ -445,20 +380,27 @@ struct SharkCaptureThread {
             stream = UniSyncR2W::Make(std::make_shared<UniStreamPipe>(cmd),
                 std::make_shared<UniStreamFile>(
                     save_to.generic_string(), std::ios::trunc));
-        }
-        if (!loader) {
-            loader = std::make_shared<SharkPcapngLoader>();
+            if (ext == ".pcap") {
+                loader = std::make_shared<SharkPcapLoader>(stream);
+                cmd += " -F pcap";
+            }
+            else if (ext == ".pcapng") {
+                loader = std::make_shared<SharkPcapngLoader>(stream);
+            }
         }
         if (!stream) {
             stream = std::make_shared<UniStreamPipe>(cmd);
         }
-        loader->load(stream, handler);
+        if (!loader) {
+            loader = std::make_shared<SharkPcapngLoader>(stream);
+        }
+        if (config) config(loader);
+        loader->load();
         return true;
     }
 
-    std::future<bool> start_capture(boost::filesystem::path save_to = "",
-        SharkLoader::PacketHandler handler = nullptr,
-        std::string const &if_name = "") {
+    std::future<bool> start_capture(LoaderConfig config,
+        std::string const &if_name = "", boost::filesystem::path save_to = "") {
         std::future<bool> ret;
         if (t_t) {
             {
@@ -482,7 +424,7 @@ struct SharkCaptureThread {
             ret = start_status.get_future();
         }
         t_t = std::make_unique<std::thread>(
-            thread, this, save_to, handler, if_name);
+            thread, this, config, if_name, save_to);
         return ret;
     }
 
@@ -518,17 +460,15 @@ struct SharkCaptureThread {
         return is_done_with_succeed;
     }
 
-    static void thread(SharkCaptureThread *const tobj,
-        boost::filesystem::path save_to = "",
-        SharkLoader::PacketHandler handler = nullptr,
-        std::string if_name = "") {
+    static void thread(SharkCaptureThread *const tobj, LoaderConfig config,
+        std::string if_name = "", boost::filesystem::path save_to = "") {
         {
             std::lock_guard<std::mutex> lock(tobj->t_m);
             tobj->is_capturing = true;
             tobj->start_status.set_value(true);
         }
         tobj->is_done_with_succeed =
-            tobj->start_capture_blocked(save_to, handler, if_name);
+            tobj->start_capture_blocked(config, if_name, save_to);
         {
             std::lock_guard<std::mutex> lock(tobj->t_m);
             tobj->is_capturing = false;
@@ -558,8 +498,19 @@ class TSharkManager {
 
     SharkCaptureThread capture_thread;
     InterfacesActivityThread statistics_thread;
+
+    std::shared_ptr<PacketBriefParserStream> ps_brief;
+
     std::condition_variable ctl_cv;
     std::mutex ctl_m;
+
+    SharkCaptureThread::LoaderConfig parser_config(
+        PacketBriefParserStream::PacketHandler brief_handler = nullptr) {
+        ps_brief = std::make_shared<PacketBriefParserStream>(brief_handler);
+        return [=](std::shared_ptr<SharkLoader> loader) {
+            loader->register_parser_streams(ps_brief);
+        };
+    }
 
     public:
     TSharkManager() {}
@@ -577,23 +528,21 @@ class TSharkManager {
         manager->ctl_thread_sig = CTLSIG::NO_ACTION;
     }
 
-    std::future<bool> capture_start(boost::filesystem::path save_to = "",
-        SharkLoader::PacketHandler handler = nullptr,
-        std::string const &if_name = "") {
-        return capture_thread.start_capture(save_to, handler, if_name);
+    std::future<bool> capture_start(std::string const &if_name = "",
+        boost::filesystem::path save_to = "",
+        PacketBriefParserStream::PacketHandler brief_handler = nullptr) {
+        return capture_thread.start_capture(
+            parser_config(brief_handler), if_name, save_to);
     }
 
     std::future<bool> capture_stop() {
         return capture_thread.stop_capture();
     }
 
-    std::future<std::weak_ptr<SharkLoader>> capture_from_file(
-        boost::filesystem::path path) {
-        return std::async(
-            std::launch::async, [&]() -> std::weak_ptr<SharkLoader> {
-                capture_thread.load_capture_file(path);
-                return capture_thread.loader;
-            });
+    std::future<bool> capture_from_file(boost::filesystem::path path) {
+        return std::async(std::launch::async, [&]() {
+            return capture_thread.load_capture_file(path, parser_config());
+        });
     }
 
     std::future<bool> capture_is_running() {

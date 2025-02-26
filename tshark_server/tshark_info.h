@@ -1,6 +1,7 @@
 /**
  * @file tshark_info.h
  * @author abumpkin (forwardslash@foxmail.com)
+ * @link https://github.com/abumpkin/tsharkY @endlink
  * 
  * ISC License
  *
@@ -219,8 +220,6 @@ struct PacketDefineDecode {
 
 struct Packet {
     uint32_t frame_number;
-    uint32_t frame_offset;
-    uint32_t frame_caplen;
     std::string frame_timestamp;
     std::string frame_protocol;
     std::string frame_info;
@@ -234,26 +233,10 @@ struct Packet {
     uint16_t dst_port;
     std::string data;
 
-    uint32_t load_data(
-        std::shared_ptr<UniStreamInterface> stream, uint32_t len) {
-        char buf[512];
-        uint32_t rd = 0, ret = 0;
-        while (!stream->read_eof() && ret < len) {
-            rd = len - ret;
-            if (rd > sizeof(buf)) rd = sizeof(buf);
-            rd = stream->read(buf, rd);
-            if (rd) data.append(buf, rd);
-            ret += rd;
-        }
-        return ret;
-    }
-
     rapidjson::Value to_json_obj(rapidjson::MemoryPoolAllocator<> &allocator) {
         rapidjson::Value pkt_obj;
         pkt_obj.SetObject();
         pkt_obj.AddMember("frame_number", frame_number, allocator);
-        pkt_obj.AddMember("frame_offset", frame_offset, allocator);
-        pkt_obj.AddMember("frame_caplen", frame_caplen, allocator);
         pkt_obj.AddMember("frame_timestamp",
             rapidjson::Value(frame_timestamp.c_str(), allocator), allocator);
         pkt_obj.AddMember("frame_protocol",
