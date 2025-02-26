@@ -500,15 +500,18 @@ class TSharkManager {
     InterfacesActivityThread statistics_thread;
 
     std::shared_ptr<PacketBriefParserStream> ps_brief;
+    std::shared_ptr<PacketDetailParserStream> ps_detail;
 
     std::condition_variable ctl_cv;
     std::mutex ctl_m;
 
     SharkCaptureThread::LoaderConfig parser_config(
-        PacketBriefParserStream::PacketHandler brief_handler = nullptr) {
+        PacketBriefParserStream::PacketHandler brief_handler = nullptr,
+        PacketDetailParserStream::PacketHandler detail_handler = nullptr) {
         ps_brief = std::make_shared<PacketBriefParserStream>(brief_handler);
+        ps_detail = std::make_shared<PacketDetailParserStream>(detail_handler);
         return [=](std::shared_ptr<SharkLoader> loader) {
-            loader->register_parser_streams(ps_brief);
+            loader->register_parser_streams(ps_brief, ps_detail);
         };
     }
 
@@ -530,9 +533,10 @@ class TSharkManager {
 
     std::future<bool> capture_start(std::string const &if_name = "",
         boost::filesystem::path save_to = "",
-        PacketBriefParserStream::PacketHandler brief_handler = nullptr) {
+        PacketBriefParserStream::PacketHandler brief_handler = nullptr,
+        PacketDetailParserStream::PacketHandler detail_handler = nullptr) {
         return capture_thread.start_capture(
-            parser_config(brief_handler), if_name, save_to);
+            parser_config(brief_handler, detail_handler), if_name, save_to);
     }
 
     std::future<bool> capture_stop() {

@@ -2,11 +2,11 @@
  * @file parser_stream.h
  * @author abumpkin (forwardslash@foxmail.com)
  * @link https://github.com/abumpkin/tsharkY @endlink
- * 
+ *
  * ISC License
  *
  * @copyright Copyright (c) 2025 abumpkin
- * 
+ *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
  * copyright notice and this permission notice appear in all copies.
@@ -20,6 +20,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#pragma once
 #include "mutils.h"
 #include "tshark_info.h"
 #include "unistream.h"
@@ -131,6 +132,43 @@ struct PacketBriefParserStream : ParserStream, UniStreamPipeUnblocked {
         // 其他处理
         if (handler) {
             handler(packet);
+        }
+    }
+};
+
+struct PacketDetailParserStream : ParserStream, UniStreamPipeUnblocked {
+    using PacketHandler =
+        std::function<void(std::shared_ptr<PacketDefineDecode>)>;
+    std::vector<std::shared_ptr<PacketDefineDecode>> packets_list;
+    std::map<uint32_t, std::shared_ptr<PacketDefineDecode>> packets;
+
+    PacketHandler handler;
+
+    PacketDetailParserStream() = delete;
+    PacketDetailParserStream(std::string const &cmd)
+        : UniStreamPipeUnblocked(cmd) {}
+    PacketDetailParserStream(PacketHandler handler = nullptr) {
+        std::string cmd = TSHARK_PATH " -Q -l -r - -T pdml";
+        new (this)(PacketDetailParserStream)(cmd);
+        this->handler = handler;
+    }
+
+    virtual void packet_arrived(std::vector<char> const &fixed,
+        std::vector<char> const &block, uint32_t cap_off,
+        uint32_t cap_len) override {
+        std::shared_ptr<PacketDefineDecode> packet_def;
+        std::string xml, line;
+        bool f = false;
+        while (true) {
+            line = read_until('\n');
+            if (line.find("<packet>") != std::string::npos) f = true;
+            if (f) xml.append(line);
+            if (line.find("</packet>") != std::string::npos) break;
+        }
+        packet_def = std::make_shared<PacketDefineDecode>(xml);
+        // 其他处理
+        if (handler) {
+            handler(packet_def);
         }
     }
 };

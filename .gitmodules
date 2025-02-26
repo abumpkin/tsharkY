@@ -13,3 +13,6 @@
 [submodule "3rd/tinyxml2"]
 	path = 3rd/tinyxml2
 	url = https://github.com/leethomason/tinyxml2.git
+[submodule "3rd/oatpp"]
+	path = 3rd/oatpp
+	url = https://github.com/oatpp/oatpp.git

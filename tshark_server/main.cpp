@@ -1,4 +1,5 @@
 #include "mutils.h"
+#include "tshark_info.h"
 #include "tshark_manager.h"
 #include <chrono>
 #include <cstdint>
@@ -20,11 +21,14 @@ int main(int argc, char **argv) {
     // }
     // 抓包
     m.interfaces_activity_monitor_start().wait();
-    auto pac = [&](std::shared_ptr<Packet> packet) {
+    auto brief = [&](std::shared_ptr<Packet> packet) {
         LOG_F(0, "packet: len = %zu", packet->data.size());
         LOG_F(INFO, "%s", packet->to_json().c_str());
     };
-    m.capture_start("wlan0", "", pac);
+    auto detail = [&](std::shared_ptr<PacketDefineDecode> packet) {
+        LOG_F(INFO, "%s", packet->to_json().c_str());
+    };
+    m.capture_start("wlan0", "", brief, detail);
     std::this_thread::sleep_for(std::chrono::seconds(5));
     if (m.capture_stop().get()) {
         LOG_F(INFO, "停止捕获数据");
