@@ -431,6 +431,7 @@ class UniSyncR2W : virtual public UniStreamInterface {
     }
     virtual void close_read() override {
         r->close_read();
+        w->close_read();
     }
     virtual bool read_eof() override {
         return r->read_eof();

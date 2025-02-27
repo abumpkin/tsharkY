@@ -25,7 +25,6 @@
 #include "tshark_info.h"
 #include "unistream.h"
 #include <cstdint>
-#include <map>
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -57,7 +56,6 @@ struct PacketBriefParserStream : ParserStream, UniStreamPipeUnblocked {
         sizeof(CMD_Fields) / sizeof(char const *);
     using PacketHandler = std::function<void(std::shared_ptr<Packet>)>;
     std::vector<std::shared_ptr<Packet>> packets_list;
-    std::map<uint32_t, std::shared_ptr<Packet>> packets;
 
     PacketHandler handler;
 
@@ -76,7 +74,7 @@ struct PacketBriefParserStream : ParserStream, UniStreamPipeUnblocked {
         this->handler = handler;
     }
 
-    virtual void packet_arrived(std::vector<char> const &fixed,
+    virtual void packet_arrived(std::vector<char> const &,
         std::vector<char> const &block, uint32_t cap_off,
         uint32_t cap_len) override {
         std::string explain = read_until('\n');
@@ -128,7 +126,6 @@ struct PacketBriefParserStream : ParserStream, UniStreamPipeUnblocked {
 
         // 保存
         packets_list.push_back(packet);
-        packets.insert_or_assign(packet->frame_number, packet);
         // 其他处理
         if (handler) {
             handler(packet);
@@ -140,7 +137,6 @@ struct PacketDetailParserStream : ParserStream, UniStreamPipeUnblocked {
     using PacketHandler =
         std::function<void(std::shared_ptr<PacketDefineDecode>)>;
     std::vector<std::shared_ptr<PacketDefineDecode>> packets_list;
-    std::map<uint32_t, std::shared_ptr<PacketDefineDecode>> packets;
 
     PacketHandler handler;
 
@@ -153,9 +149,8 @@ struct PacketDetailParserStream : ParserStream, UniStreamPipeUnblocked {
         this->handler = handler;
     }
 
-    virtual void packet_arrived(std::vector<char> const &fixed,
-        std::vector<char> const &block, uint32_t cap_off,
-        uint32_t cap_len) override {
+    virtual void packet_arrived(std::vector<char> const &,
+        std::vector<char> const &, uint32_t, uint32_t) override {
         std::shared_ptr<PacketDefineDecode> packet_def;
         std::string xml, line;
         bool f = false;
@@ -166,6 +161,8 @@ struct PacketDetailParserStream : ParserStream, UniStreamPipeUnblocked {
             if (line.find("</packet>") != std::string::npos) break;
         }
         packet_def = std::make_shared<PacketDefineDecode>(xml);
+        // 保存
+        packets_list.push_back(packet_def);
         // 其他处理
         if (handler) {
             handler(packet_def);

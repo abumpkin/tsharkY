@@ -88,6 +88,7 @@ struct InterfacesActivityThread {
             this->capture_stop_ctl = false;
             this->is_done_with_succeed = false;
             start_status = std::promise<bool>();
+            stop_status = std::promise<bool>();
             ret = start_status.get_future();
         }
         t_t = std::make_unique<std::thread>(thread, this);
@@ -98,7 +99,7 @@ struct InterfacesActivityThread {
         std::lock_guard<std::mutex> lock(t_m);
         std::future<bool> ret;
         if (!is_operating) {
-            LOG_F(ERROR, "ERROR: Not in running. Nothing to stop.");
+            LOG_F(WARNING, "WARNING: Monitor not running.");
             return std::async(std::launch::deferred, []() {
                 return false;
             });
@@ -149,9 +150,10 @@ struct InterfacesActivityThread {
             tobj->is_operating = false;
             if (tobj->capture_stop_ctl) {
                 tobj->capture_stop_ctl = false;
-                tobj->stop_status.set_value(true);
+                tobj->stop_status.set_value_at_thread_exit(true);
             }
         }
+        LOG_F(INFO, "Interfaces activity monitor thread exit.");
     }
 
     ~InterfacesActivityThread() {

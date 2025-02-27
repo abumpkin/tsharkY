@@ -34,6 +34,13 @@ function(load_3rd tar)
     endif()
 endfunction()
 
+# oatpp
+set(OATPP_INSTALL OFF CACHE BOOL "oatpp install target")
+set(OATPP_BUILD_TESTS OFF CACHE BOOL "oatpp test targets")
+set(OATPP_LINK_TEST_LIBRARY OFF CACHE BOOL "oatpp++")
+add_subdirectory(3rd/oatpp)
+load_3rd(oatpp)
+
 # tinyxml2
 set(BUILD_TESTING OFF)
 set(tinyxml2_BUILD_TESTING OFF CACHE BOOL "tinyxml2 build test")

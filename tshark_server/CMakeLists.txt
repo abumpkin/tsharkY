@@ -11,4 +11,5 @@ target_link_libraries(tshark_server PRIVATE
     loguru
     Boost::process
     tinyxml2
+    oatpp
 )

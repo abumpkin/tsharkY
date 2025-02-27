@@ -25,6 +25,7 @@
 #include "boost/filesystem/path.hpp"
 #include "mutils.h"
 #include "parser_stream.h"
+#include "rapidjson/allocators.h"
 #include "traffic_statistics.h"
 #include "tshark_info.h"
 #include "unistream.h"
@@ -87,6 +88,11 @@ struct SharkLoader {
         return false;
     }
 
+    virtual void close_streams() {
+        if (in_stream) in_stream->close_read();
+        if (parser_stream) parser_stream->close_read();
+    }
+
     virtual void interrupt_load() {
         if (!stop_ctl) stop_ctl = true;
     }
@@ -139,13 +145,16 @@ struct SharkPcapngLoader : SharkLoader {
             read_len = bin_stream->read_async(p_section, sizeof(section));
             do {
                 if (stop_ctl) {
-                    bin_stream->close_read();
+                    close_streams();
                     return false;
                 }
             } while (read_len.wait_for(std::chrono::milliseconds(100)) ==
                      std::future_status::timeout);
             rd_len = read_len.get();
-            if (!rd_len) return false;
+            if (!rd_len) {
+                close_streams();
+                return false;
+            }
             if (section.block_type == 0x0a0d0d0a ||
                 section.block_type == 0x00000001) {
                 if (fixed_data.capacity() - fixed_data.size() <
@@ -161,6 +170,7 @@ struct SharkPcapngLoader : SharkLoader {
                 fixed_data.resize(fixed_data.size() + rd_len);
                 if (!rd_len) {
                     LOG_F(ERROR, "pcapng wrong format");
+                    close_streams();
                     return false;
                 }
                 LOG_F(INFO, "pcapng found Pcapng Header Block!");
@@ -173,6 +183,7 @@ struct SharkPcapngLoader : SharkLoader {
                     header.size());
                 LOG_F(ERROR, "pcapng wrong format: %s",
                     utils_data_to_hex(header).c_str());
+                close_streams();
                 return false;
             }
             if (section.block_type == 0x00000006) {
@@ -188,6 +199,7 @@ struct SharkPcapngLoader : SharkLoader {
                     sizeof(EnhancedPacketBlockHeader) - sizeof(GeneralHeader));
                 if (!rd_len) {
                     LOG_F(ERROR, "pcapng wrong format");
+                    close_streams();
                     return false;
                 }
                 cap_off = sizeof(EnhancedPacketBlockHeader);
@@ -198,6 +210,7 @@ struct SharkPcapngLoader : SharkLoader {
 
                 if (rd_len != section.block_length - cap_off) {
                     LOG_F(ERROR, "pcapng wrong format");
+                    close_streams();
                     return false;
                 }
                 try {
@@ -207,6 +220,7 @@ struct SharkPcapngLoader : SharkLoader {
                 }
                 catch (...) {
                     LOG_F(ERROR, "parse failure");
+                    close_streams();
                     return false;
                 }
                 continue;
@@ -215,9 +229,11 @@ struct SharkPcapngLoader : SharkLoader {
                 section.block_length - sizeof(GeneralHeader));
             if (!rd_len) {
                 LOG_F(ERROR, "pcapng wrong format");
+                close_streams();
                 return false;
             }
         }
+        close_streams();
         return true;
     }
 };
@@ -256,6 +272,7 @@ struct SharkPcapLoader : SharkLoader {
             pcap_header->magic_number != 0xa1b2c3d4) {
             LOG_F(ERROR, "pcap wrong format: %s",
                 utils_data_to_hex(fixed_data).c_str());
+            close_streams();
             return false;
         }
         uint32_t rd_len;
@@ -266,13 +283,16 @@ struct SharkPcapLoader : SharkLoader {
                 bin_stream->read_async(p_section, sizeof(PcapPacketHeader));
             do {
                 if (stop_ctl) {
-                    bin_stream->close_read();
+                    close_streams();
                     return false;
                 }
             } while (read_len.wait_for(std::chrono::milliseconds(100)) ==
                      std::future_status::timeout);
             rd_len = read_len.get();
-            if (!rd_len) return false;
+            if (!rd_len) {
+                close_streams();
+                return false;
+            }
 
             uint32_t cap_off, cap_len;
             uint32_t block_len = sizeof(PcapPacketHeader) + section.caplen;
@@ -289,6 +309,7 @@ struct SharkPcapLoader : SharkLoader {
 
             if (rd_len != block_len - cap_off) {
                 LOG_F(ERROR, "pcapng wrong format");
+                close_streams();
                 return false;
             }
             try {
@@ -298,9 +319,11 @@ struct SharkPcapLoader : SharkLoader {
             }
             catch (...) {
                 LOG_F(ERROR, "parse failure");
+                close_streams();
                 return false;
             }
         }
+        close_streams();
         return true;
     }
 };
@@ -334,6 +357,7 @@ struct SharkCaptureThread {
                 boost::filesystem::absolute(path).c_str());
             return false;
         }
+        if (capturing_status()) stop_capture().wait();
         auto stream = std::make_shared<UniStreamFile>(path.generic_string());
         if (ext == ".pcap") {
             loader = std::make_shared<SharkPcapLoader>(stream);
@@ -353,6 +377,7 @@ struct SharkCaptureThread {
         if (!if_name.empty()) {
             cmd += " -i " + if_name;
         }
+        if (loader) loader.reset();
         if (!save_to.empty()) {
             save_to = utils_test_valid_filename(save_to);
             if (save_to.empty()) {
@@ -421,6 +446,7 @@ struct SharkCaptureThread {
             this->is_capturing = false;
             this->is_done_with_succeed = false;
             start_status = std::promise<bool>();
+            stop_status = std::promise<bool>();
             ret = start_status.get_future();
         }
         t_t = std::make_unique<std::thread>(
@@ -474,6 +500,7 @@ struct SharkCaptureThread {
             tobj->is_capturing = false;
             tobj->stop_status.set_value_at_thread_exit(true);
         }
+        LOG_F(INFO, "Capture thread exit.");
     }
 
     ~SharkCaptureThread() {
@@ -535,6 +562,10 @@ class TSharkManager {
         boost::filesystem::path save_to = "",
         PacketBriefParserStream::PacketHandler brief_handler = nullptr,
         PacketDetailParserStream::PacketHandler detail_handler = nullptr) {
+        if (capture_is_running())
+            return std::async(std::launch::deferred, [] {
+                return false;
+            });
         return capture_thread.start_capture(
             parser_config(brief_handler, detail_handler), if_name, save_to);
     }
@@ -544,15 +575,36 @@ class TSharkManager {
     }
 
     std::future<bool> capture_from_file(boost::filesystem::path path) {
-        return std::async(std::launch::async, [&]() {
+        return std::async(std::launch::async, [=]() {
             return capture_thread.load_capture_file(path, parser_config());
         });
     }
 
-    std::future<bool> capture_is_running() {
-        return std::async(std::launch::deferred, [&]() {
-            return capture_thread.capturing_status();
-        });
+    bool capture_is_running() {
+        return capture_thread.capturing_status();
+    }
+
+    std::string capture_get_brief(uint32_t pos = 0, uint32_t len = 0) {
+        std::string ret;
+        if (!ps_brief) return ret;
+        uint32_t total = ps_brief->packets_list.size();
+        if (pos > total) return ret;
+        if (pos + len > total || len == 0) len = total - pos;
+        rapidjson::Document obj;
+        rapidjson::MemoryPoolAllocator<> allocator;
+        obj.SetArray();
+        for (auto i = ps_brief->packets_list.cbegin() + pos;
+            i != ps_brief->packets_list.cbegin() + pos + len; i++) {
+            obj.PushBack(i->get()->to_json_obj(allocator), allocator);
+        }
+        return utils_to_json(obj, true);
+    }
+
+    std::string capture_get_detail(uint32_t pos) {
+        std::string ret;
+        if (!ps_detail) return ret;
+        if (pos >= ps_detail->packets_list.size()) return ret;
+        return ps_detail->packets_list[pos]->to_json();
     }
 
     std::future<std::vector<IfaceInfo>> interfaces_get_info() {
@@ -605,16 +657,12 @@ class TSharkManager {
         return statistics_thread.stop();
     }
 
-    std::future<bool> interfaces_activity_monitor_is_running() {
-        return std::async(std::launch::deferred, [&]() {
-            return statistics_thread.operating_status();
-        });
+    bool interfaces_activity_monitor_is_running() {
+        return statistics_thread.operating_status();
     }
 
-    std::future<std::unordered_map<std::string, uint32_t>>
+    std::unordered_map<std::string, uint32_t>
     interfaces_activity_monitor_read() {
-        return std::async(std::launch::deferred, [&]() {
-            return statistics_thread.read();
-        });
+        return statistics_thread.read();
     }
 };
