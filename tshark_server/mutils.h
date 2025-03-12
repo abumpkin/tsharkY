@@ -21,8 +21,6 @@
  */
 
 #pragma once
-#include "boost/filesystem/operations.hpp"
-#include "boost/filesystem/path.hpp"
 #include "rapidjson/document.h"
 #include "rapidjson/prettywriter.h"
 #include "rapidjson/stringbuffer.h"
@@ -32,6 +30,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -148,17 +147,12 @@ inline std::string const utils_ip2region(std::string ip) {
     return ret;
 }
 
-inline boost::filesystem::path utils_test_valid_filename(
-    boost::filesystem::path test) {
-    test = boost::filesystem::absolute(test);
-    // try {
-    //     test = boost::filesystem::canonical(test);
-    // }
-    // catch (...) {
-    //     return "";
-    // }
-    if (boost::filesystem::is_directory(test)) return "";
-    return test;
+inline std::filesystem::path utils_test_valid_filename(
+    std::filesystem::path test) {
+    test = std::filesystem::absolute(test); // 获取绝对路径
+    if (std::filesystem::is_directory(test))
+        return ""; // 如果是目录，返回空字符串
+    return test;   // 否则返回文件路径
 }
 
 inline std::string utils_to_json(
@@ -350,33 +344,35 @@ struct utils_translator3 {
     std::unordered_map<char, Node> root;
     std::unordered_map<std::string, std::string> dict;
 
-    utils_translator3(std::unordered_map<std::string, std::string>& dict) : dict(dict) {
-        for (auto& [k, v] : dict) {
+    utils_translator3(std::unordered_map<std::string, std::string> &dict)
+        : dict(dict) {
+        for (auto &[k, v] : dict) {
             add_word_to_trie(k);
         }
     }
 
-    void add(const std::string& word, const std::string& val) {
+    void add(const std::string &word, const std::string &val) {
         add_word_to_trie(word);
         dict[word] = val;
     }
 
-    std::string trans(const std::string& text) {
+    std::string trans(const std::string &text) {
         std::string result;
         const size_t n = text.size();
-        
-        for (size_t i = 0; i < n; ) {
+
+        for (size_t i = 0; i < n;) {
             size_t max_len = 0;
             std::string replacement;
-            
-            auto* current = &root;
+
+            auto *current = &root;
             for (size_t j = i; j < n; ++j) {
                 const char c = text[j];
                 if (!current->count(c)) break;
 
-                Node& node = current->at(c);
+                Node &node = current->at(c);
                 if (node.is_end) {
-                    if (auto it = dict.find(text.substr(i, j-i+1)); it != dict.end()) {
+                    if (auto it = dict.find(text.substr(i, j - i + 1));
+                        it != dict.end()) {
                         max_len = j - i + 1;
                         replacement = it->second;
                     }
@@ -387,25 +383,26 @@ struct utils_translator3 {
             if (max_len) {
                 result += replacement;
                 i += max_len;
-            } else {
+            }
+            else {
                 result += text[i];
                 ++i;
             }
         }
-        
+
         return result;
     }
 
-private:
-    void add_word_to_trie(const std::string& word) {
-        auto* current = &root;
+    private:
+    void add_word_to_trie(const std::string &word) {
+        auto *current = &root;
         for (size_t i = 0; i < word.size(); ++i) {
             const char c = word[i];
             if (!current->count(c)) {
                 current->emplace(c, Node{c, false, {}});
             }
-            Node& node = current->at(c);
-            if (i == word.size()-1) {
+            Node &node = current->at(c);
+            if (i == word.size() - 1) {
                 node.is_end = true;
             }
             current = &node.child;

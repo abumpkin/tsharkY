@@ -21,8 +21,6 @@
  */
 
 #pragma once
-#include "boost/filesystem/operations.hpp"
-#include "boost/filesystem/path.hpp"
 #include "mutils.h"
 #include "parser_stream.h"
 #include "rapidjson/allocators.h"
@@ -347,17 +345,17 @@ struct SharkCaptureThread {
     public:
     SharkCaptureThread() = default;
 
-    bool load_capture_file(boost::filesystem::path path, LoaderConfig config) {
+    bool load_capture_file(std::filesystem::path path, LoaderConfig config) {
         std::string ext = path.extension().generic_string();
         utils_str_lowcase(ext);
-        if (!boost::filesystem::exists(path)) {
+        if (!std::filesystem::exists(path)) {
             LOG_F(ERROR, "ERROR: (%s) File not exists.",
-                boost::filesystem::absolute(path).c_str());
+                std::filesystem::absolute(path).c_str());
             return false;
         }
         if (ext != ".pcap" && ext != ".pcapng") {
             LOG_F(ERROR, "ERROR: (%s) Unkown file format. (%s)", ext.c_str(),
-                boost::filesystem::absolute(path).c_str());
+                std::filesystem::absolute(path).c_str());
             return false;
         }
         if (capturing_status()) stop_capture().wait();
@@ -374,7 +372,7 @@ struct SharkCaptureThread {
     }
 
     bool start_capture_blocked(LoaderConfig config, std::string if_name = "",
-        boost::filesystem::path save_to = "") {
+        std::filesystem::path save_to = "") {
         std::shared_ptr<UniStreamInterface> stream;
         std::string cmd = DUMPCAP_PATH " -Q -w -";
         if (!if_name.empty()) {
@@ -396,14 +394,14 @@ struct SharkCaptureThread {
                     save_to.c_str());
                 return false;
             }
-            if (boost::filesystem::exists(save_to)) {
+            if (std::filesystem::exists(save_to)) {
                 LOG_F(WARNING,
                     "WARING: (%s) File has been exists. Deleted now!",
                     save_to.c_str());
-                boost::filesystem::remove(save_to);
+                std::filesystem::remove(save_to);
             }
-            if (!boost::filesystem::exists(save_to.parent_path())) {
-                boost::filesystem::create_directories(save_to.parent_path());
+            if (!std::filesystem::exists(save_to.parent_path())) {
+                std::filesystem::create_directories(save_to.parent_path());
             }
             stream = UniSyncR2W::Make(std::make_shared<UniStreamDualPipeU>(cmd),
                 std::make_shared<UniStreamFile>(
@@ -428,7 +426,7 @@ struct SharkCaptureThread {
     }
 
     std::future<bool> start_capture(LoaderConfig config,
-        std::string const &if_name = "", boost::filesystem::path save_to = "") {
+        std::string const &if_name = "", std::filesystem::path save_to = "") {
         std::future<bool> ret;
         if (t_t) {
             {
@@ -490,7 +488,7 @@ struct SharkCaptureThread {
     }
 
     static void thread(SharkCaptureThread *const tobj, LoaderConfig config,
-        std::string if_name = "", boost::filesystem::path save_to = "") {
+        std::string if_name = "", std::filesystem::path save_to = "") {
         {
             std::lock_guard<std::mutex> lock(tobj->t_m);
             tobj->is_capturing = true;
@@ -562,7 +560,7 @@ class TSharkManager {
     }
 
     std::future<bool> capture_start(std::string const &if_name = "",
-        boost::filesystem::path save_to = "",
+        std::filesystem::path save_to = "",
         ParserStreamPacketBrief<>::PacketHandler brief_handler = nullptr,
         ParserStreamPacketDetail::PacketHandler detail_handler = nullptr) {
         if (capture_is_running())
@@ -577,7 +575,7 @@ class TSharkManager {
         return capture_thread.stop_capture();
     }
 
-    std::future<bool> capture_from_file(boost::filesystem::path path) {
+    std::future<bool> capture_from_file(std::filesystem::path path) {
         return std::async(std::launch::async, [=]() {
             return capture_thread.load_capture_file(path, parser_config());
         });

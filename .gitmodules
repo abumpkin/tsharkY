@@ -7,9 +7,6 @@
 [submodule "3rd/loguru"]
 	path = 3rd/loguru
 	url = https://github.com/emilk/loguru.git
-[submodule "3rd/boost"]
-	path = 3rd/boost
-	url = https://github.com/boostorg/boost.git
 [submodule "3rd/oatpp"]
 	path = 3rd/oatpp
 	url = https://github.com/oatpp/oatpp.git

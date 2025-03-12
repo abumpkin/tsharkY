@@ -9,8 +9,6 @@ target_link_libraries(tshark_server PRIVATE
     RapidJSON
     ip2region
     loguru
-    Boost::process
-    tinyxml2
     oatpp
     pugixml-static
 )

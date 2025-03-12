@@ -45,12 +45,6 @@ set(OATPP_LINK_TEST_LIBRARY OFF CACHE BOOL "oatpp++")
 add_subdirectory(3rd/oatpp)
 load_3rd(oatpp)
 
-# tinyxml2
-set(BUILD_TESTING OFF)
-set(tinyxml2_BUILD_TESTING OFF CACHE BOOL "tinyxml2 build test")
-add_subdirectory(3rd/tinyxml2)
-load_3rd(tinyxml2)
-
 # loguru
 add_subdirectory(3rd/loguru)
 load_3rd(loguru)
@@ -73,25 +67,6 @@ add_library(ip2region STATIC ${IP2REGION_SRC})
 set_target_properties(ip2region PROPERTIES ARCHIVE_OUTPUT_DIRECTORY ip2region)
 target_include_directories(ip2region PUBLIC 3rd/ip2region/binding/cpp)
 load_3rd(ip2region)
-
-# boost
-foreach(X
-    unordered
-    intrusive conversion atomic regex functional
-    container integer numeric/conversion scope range typeof
-    smart_ptr lexical_cast pool utility function tuple
-    mp11 preprocessor io exception date_time type_traits variant2
-    static_assert describe detail bind context function_types concept_check throw_exception mpl
-    align array assert container_hash filesystem predef
-    algorithm asio config core fusion iterator move optional system tokenizer type_index winapi
-    process
-)
-    add_subdirectory(3rd/boost/libs/${X})
-    if(X STREQUAL "numeric/conversion")
-        set(X numeric_conversion)
-    endif()
-    load_3rd(Boost::${X})
-endforeach()
 
 ###############################################################################
 message("###### INCLUDE LIST ######")
