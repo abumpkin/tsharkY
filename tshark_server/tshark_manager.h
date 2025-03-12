@@ -64,8 +64,6 @@ struct SharkLoader {
     SharkLoader(SharkLoader &&) = delete;
     SharkLoader &operator=(SharkLoader &&) = delete;
     std::vector<char> fixed_data;
-    std::vector<std::shared_ptr<Packet>> packets_list;
-    std::unordered_map<uint32_t, std::shared_ptr<Packet>> packets;
     std::shared_ptr<UniStreamInterface> parser_stream;
     std::vector<std::shared_ptr<ParserStream>> parsers;
     std::shared_ptr<UniStreamInterface> in_stream;
@@ -137,24 +135,28 @@ struct SharkPcapngLoader : SharkLoader {
         GeneralHeader section;
         EnhancedPacketBlockHeader packet_section;
         char *p_section = reinterpret_cast<char *>(&section);
-        uint32_t rd_len;
+        uint32_t rd_len, t;
         bool right_format = false;
-        std::future<uint32_t> read_len;
         std::vector<char> buf;
+        bool ret = false;
         while (true) {
-            read_len = bin_stream->read_async(p_section, sizeof(section));
-            do {
-                if (stop_ctl) {
-                    close_streams();
-                    return false;
-                }
-            } while (read_len.wait_for(std::chrono::milliseconds(100)) ==
-                     std::future_status::timeout);
-            rd_len = read_len.get();
-            if (!rd_len) {
-                close_streams();
-                return false;
+            if (bin_stream->eof()) {
+                ret = true;
+                break;
             }
+            using namespace std::chrono_literals;
+            rd_len = 0;
+            t = 0;
+            while (!stop_ctl && !bin_stream->eof() &&
+                   rd_len < sizeof(section)) {
+                t = bin_stream->read_ub(
+                    p_section + rd_len, sizeof(section) - rd_len);
+                rd_len += t;
+                if (!t) std::this_thread::sleep_for(1ms);
+            }
+
+            if (stop_ctl) break;
+            if (!rd_len) break;
             if (section.block_type == 0x0a0d0d0a ||
                 section.block_type == 0x00000001) {
                 if (fixed_data.capacity() - fixed_data.size() <
@@ -170,8 +172,7 @@ struct SharkPcapngLoader : SharkLoader {
                 fixed_data.resize(fixed_data.size() + rd_len);
                 if (!rd_len) {
                     LOG_F(ERROR, "pcapng wrong format");
-                    close_streams();
-                    return false;
+                    break;
                 }
                 LOG_F(INFO, "pcapng found Pcapng Header Block!");
                 right_format = true;
@@ -183,8 +184,7 @@ struct SharkPcapngLoader : SharkLoader {
                     header.size());
                 LOG_F(ERROR, "pcapng wrong format: %s",
                     utils_data_to_hex(header).c_str());
-                close_streams();
-                return false;
+                break;
             }
             if (section.block_type == 0x00000006) {
                 uint32_t cap_off, cap_len;
@@ -199,19 +199,18 @@ struct SharkPcapngLoader : SharkLoader {
                     sizeof(EnhancedPacketBlockHeader) - sizeof(GeneralHeader));
                 if (!rd_len) {
                     LOG_F(ERROR, "pcapng wrong format");
-                    close_streams();
-                    return false;
+                    break;
                 }
                 cap_off = sizeof(EnhancedPacketBlockHeader);
                 cap_len = packet_section.captured_packet_length;
                 memcpy(buf.data(), &packet_section, cap_off);
                 rd_len = bin_stream->read(
                     buf.data() + cap_off, section.block_length - cap_off);
+                bin_stream->flush();
 
                 if (rd_len != section.block_length - cap_off) {
                     LOG_F(ERROR, "pcapng wrong format");
-                    close_streams();
-                    return false;
+                    break;
                 }
                 try {
                     for (auto const &i : parsers) {
@@ -220,8 +219,7 @@ struct SharkPcapngLoader : SharkLoader {
                 }
                 catch (...) {
                     LOG_F(ERROR, "parse failure");
-                    close_streams();
-                    return false;
+                    break;
                 }
                 continue;
             }
@@ -229,12 +227,14 @@ struct SharkPcapngLoader : SharkLoader {
                 section.block_length - sizeof(GeneralHeader));
             if (!rd_len) {
                 LOG_F(ERROR, "pcapng wrong format");
-                close_streams();
-                return false;
+                break;
             }
         }
+        for (auto const &i : parsers) {
+            i->wait_done();
+        }
         close_streams();
-        return true;
+        return ret;
     }
 };
 
@@ -275,24 +275,26 @@ struct SharkPcapLoader : SharkLoader {
             close_streams();
             return false;
         }
-        uint32_t rd_len;
-        std::future<uint32_t> read_len;
+        uint32_t rd_len, t;
         std::vector<char> buf;
+        bool ret = false;
         while (true) {
-            read_len =
-                bin_stream->read_async(p_section, sizeof(PcapPacketHeader));
-            do {
-                if (stop_ctl) {
-                    close_streams();
-                    return false;
-                }
-            } while (read_len.wait_for(std::chrono::milliseconds(100)) ==
-                     std::future_status::timeout);
-            rd_len = read_len.get();
-            if (!rd_len) {
-                close_streams();
-                return false;
+            if (bin_stream->eof()) {
+                ret = true;
+                break;
             }
+            using namespace std::chrono_literals;
+            rd_len = 0;
+            t = 0;
+            while (!stop_ctl && !bin_stream->eof() &&
+                   rd_len < sizeof(PcapPacketHeader)) {
+                t = bin_stream->read_ub(
+                    p_section + rd_len, sizeof(PcapPacketHeader) - rd_len);
+                rd_len += t;
+                if (!t) std::this_thread::sleep_for(1ms);
+            }
+            if (stop_ctl) break;
+            if (!rd_len) break;
 
             uint32_t cap_off, cap_len;
             uint32_t block_len = sizeof(PcapPacketHeader) + section.caplen;
@@ -306,11 +308,11 @@ struct SharkPcapLoader : SharkLoader {
             memcpy(buf.data(), p_section, cap_off);
             rd_len =
                 bin_stream->read(buf.data() + cap_off, block_len - cap_off);
+            bin_stream->flush();
 
             if (rd_len != block_len - cap_off) {
                 LOG_F(ERROR, "pcapng wrong format");
-                close_streams();
-                return false;
+                break;
             }
             try {
                 for (auto const &i : parsers) {
@@ -319,12 +321,14 @@ struct SharkPcapLoader : SharkLoader {
             }
             catch (...) {
                 LOG_F(ERROR, "parse failure");
-                close_streams();
-                return false;
+                break;
             }
         }
+        for (auto const &i : parsers) {
+            i->wait_done();
+        }
         close_streams();
-        return true;
+        return ret;
     }
 };
 
@@ -402,7 +406,7 @@ struct SharkCaptureThread {
             if (!boost::filesystem::exists(save_to.parent_path())) {
                 boost::filesystem::create_directories(save_to.parent_path());
             }
-            stream = UniSyncR2W::Make(std::make_shared<UniStreamPipe>(cmd),
+            stream = UniSyncR2W::Make(std::make_shared<UniStreamDualPipeU>(cmd),
                 std::make_shared<UniStreamFile>(
                     save_to.generic_string(), std::ios::trunc));
             if (ext == ".pcap") {
@@ -414,7 +418,7 @@ struct SharkCaptureThread {
             }
         }
         if (!stream) {
-            stream = std::make_shared<UniStreamPipe>(cmd);
+            stream = std::make_shared<UniStreamDualPipeU>(cmd);
         }
         if (!loader) {
             loader = std::make_shared<SharkPcapngLoader>(stream);
@@ -526,17 +530,17 @@ class TSharkManager {
     SharkCaptureThread capture_thread;
     InterfacesActivityThread statistics_thread;
 
-    std::shared_ptr<PacketBriefParserStream> ps_brief;
-    std::shared_ptr<PacketDetailParserStream> ps_detail;
+    std::shared_ptr<ParserStreamPacketBrief<>> ps_brief;
+    std::shared_ptr<ParserStreamPacketDetail> ps_detail;
 
     std::condition_variable ctl_cv;
     std::mutex ctl_m;
 
     SharkCaptureThread::LoaderConfig parser_config(
-        PacketBriefParserStream::PacketHandler brief_handler = nullptr,
-        PacketDetailParserStream::PacketHandler detail_handler = nullptr) {
-        ps_brief = std::make_shared<PacketBriefParserStream>(brief_handler);
-        ps_detail = std::make_shared<PacketDetailParserStream>(detail_handler);
+        ParserStreamPacketBrief<>::PacketHandler brief_handler = nullptr,
+        ParserStreamPacketDetail::PacketHandler detail_handler = nullptr) {
+        ps_brief = std::make_shared<ParserStreamPacketBrief<>>(brief_handler);
+        ps_detail = std::make_shared<ParserStreamPacketDetail>(detail_handler);
         return [=](std::shared_ptr<SharkLoader> loader) {
             loader->register_parser_streams(ps_brief, ps_detail);
         };
@@ -560,8 +564,8 @@ class TSharkManager {
 
     std::future<bool> capture_start(std::string const &if_name = "",
         boost::filesystem::path save_to = "",
-        PacketBriefParserStream::PacketHandler brief_handler = nullptr,
-        PacketDetailParserStream::PacketHandler detail_handler = nullptr) {
+        ParserStreamPacketBrief<>::PacketHandler brief_handler = nullptr,
+        ParserStreamPacketDetail::PacketHandler detail_handler = nullptr) {
         if (capture_is_running())
             return std::async(std::launch::deferred, [] {
                 return false;
@@ -610,7 +614,7 @@ class TSharkManager {
     std::future<std::vector<IfaceInfo>> interfaces_get_info() {
         return std::async(std::launch::async, [&]() {
             std::vector<IfaceInfo> ret;
-            auto pipe = UniStreamPipe(DUMPCAP_PATH " -M -D");
+            auto pipe = UniStreamDualPipeU(DUMPCAP_PATH " -M -D");
             std::string json_str = pipe.read_until_eof();
             rapidjson::Document doc;
             doc.Parse(json_str.c_str(), json_str.size());

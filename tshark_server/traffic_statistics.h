@@ -54,7 +54,7 @@ struct InterfacesActivityThread {
 
     bool start_blocked() {
         std::string cmd = DUMPCAP_PATH " -S -M";
-        UniStreamPipe pipe(cmd);
+        UniStreamDualPipeU pipe(cmd);
         std::string line;
         while (!capture_stop_ctl) {
             line = pipe.read_until('\n');
@@ -63,7 +63,7 @@ struct InterfacesActivityThread {
                 std::lock_guard<std::mutex> lock(t_m);
                 statistics[fields[0]] = std::stoul(fields[1]);
             }
-            if (pipe.read_eof()) return false;
+            if (pipe.eof()) return false;
         }
         return true;
     }

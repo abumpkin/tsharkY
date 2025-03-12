@@ -32,8 +32,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <iomanip>
+#include <iostream>
 #include <memory>
+#include <optional>
+#include <queue>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <xdb_search.h>
 
@@ -176,3 +182,402 @@ inline std::string utils_to_json(
     }
     return ret;
 }
+
+class ACTranslator {
+    struct ACNode {
+        std::unordered_map<char, std::shared_ptr<ACNode>> children;
+        std::shared_ptr<ACNode> fail = nullptr;
+        std::optional<std::string> value;
+    };
+    std::vector<std::shared_ptr<ACNode>> node_pool;
+    std::shared_ptr<ACNode> root;
+    std::shared_ptr<ACNode> create() {
+        node_pool.emplace_back(std::make_shared<ACNode>());
+        return node_pool.back();
+    }
+
+    public:
+    ACTranslator(const std::unordered_map<std::string, std::string> &dict) {
+        root = create();
+        build_trie(dict);
+        build_fail_links();
+    }
+
+    void build_trie(const std::unordered_map<std::string, std::string> &dict) {
+        for (const auto &[key, val] : dict) {
+            auto node = root;
+            for (char c : key) {
+                if (!node->children[c]) {
+                    node->children[c] = create();
+                }
+                node = node->children[c];
+            }
+            node->value = val;
+        }
+    }
+
+    void build_fail_links() {
+        std::queue<std::shared_ptr<ACNode>> q;
+        // 初始化根节点的子节点失败指针
+        for (auto &[c, child] : root->children) {
+            child->fail = root;
+            q.push(child);
+        }
+
+        // BFS 构建失败指针 [[1]]
+        while (!q.empty()) {
+            auto current = q.front();
+            q.pop();
+
+            for (auto &[c, child] : current->children) {
+                auto fail_node = current->fail;
+                // 沿失败指针回溯查找最长前缀
+                while (fail_node && !fail_node->children[c]) {
+                    fail_node = fail_node->fail;
+                }
+                child->fail = fail_node ? fail_node->children[c] : root;
+                // 合并输出链 [[1]]
+                if (!child->value && child->fail->value) {
+                    child->value = child->fail->value;
+                }
+                q.push(child);
+            }
+        }
+    }
+
+    std::string trans(const std::string &text) {
+        std::string result;
+        auto node = root;
+        for (char c : text) {
+            // 沿失败指针回溯查找匹配 [[1]]
+            while (node && !node->children[c]) {
+                node = node->fail;
+            }
+            node = node ? node->children[c] : root;
+
+            // 处理最长匹配 [[1]]
+            if (node->value) {
+                result += *node->value;
+            }
+            else {
+                result += c; // 未匹配则保留原字符
+            }
+        }
+        return result;
+    }
+};
+
+struct utils_translator {
+    struct Node {
+        std::vector<std::pair<char, Node>> children;
+        std::optional<std::string> value;
+
+        // 二分查找优化子节点访问 [[7]][[9]]
+        Node *find_child(char c) {
+            auto it = std::lower_bound(
+                children.begin(), children.end(), c, [](const auto &p, char c) {
+                    return p.first < c;
+                });
+            return (it != children.end() && it->first == c) ? &it->second
+                                                            : nullptr;
+        }
+    };
+
+    Node root;
+
+    utils_translator(const std::unordered_map<std::string, std::string> &dict) {
+        for (const auto &[key, val] : dict) {
+            Node *node = &root;
+            for (char c : key) {
+                auto *child = node->find_child(c);
+                if (!child) {
+                    node->children.emplace_back(c, Node());
+                    std::sort(node->children.begin(), node->children.end(),
+                        [](const auto &a, const auto &b) {
+                            return a.first < b.first;
+                        });
+                    child = &node->children.back().second;
+                }
+                node = child;
+            }
+            node->value = val;
+        }
+    }
+
+    std::string trans(const std::string &text) {
+        std::string result;
+        result.reserve(text.size()); // 预分配内存优化 [[3]][[6]]
+
+        std::vector<std::pair<int, Node *>>
+            active_nodes; // 缓存友好型数据结构 [[2]]
+        int last_pos = 0;
+
+        for (int i = 0; i < text.size(); ++i) {
+            char c = text[i];
+            std::vector<std::pair<int, Node *>> new_nodes;
+            std::optional<std::pair<int, std::string>> best_match;
+
+            // 处理新起始节点
+            if (auto *child = root.find_child(c)) {
+                new_nodes.emplace_back(i, child);
+                if (child->value) best_match = {i, *child->value};
+            }
+
+            // 处理现有活跃节点
+            for (const auto &[start, node] : active_nodes) {
+                if (auto *child = node->find_child(c)) {
+                    new_nodes.emplace_back(start, child);
+                    if (child->value) {
+                        if (!best_match ||
+                            (i - start + 1) > (best_match->first -
+                                                  best_match->second.size())) {
+                            best_match = {start, *child->value};
+                        }
+                    }
+                }
+            }
+
+            // 处理最佳匹配
+            if (best_match) {
+                result.append(text, last_pos, best_match->first - last_pos);
+                result.append(best_match->second);
+                last_pos = best_match->first + (i - best_match->first + 1);
+                new_nodes.clear(); // 避免重叠匹配 [[8]]
+            }
+
+            active_nodes = std::move(new_nodes);
+        }
+
+        // 添加剩余文本 [[3]]
+        if (last_pos < text.size()) {
+            result.append(text, last_pos, text.size() - last_pos);
+        }
+
+        return result;
+    }
+};
+
+struct utils_translator2 {
+    struct Node {
+        char c;
+        std::unordered_map<char, Node> child;
+    };
+
+    std::unordered_map<char, Node> root;
+    std::unordered_map<std::string, std::string> dict;
+
+    utils_translator2(std::unordered_map<std::string, std::string> &dict) {
+        this->dict = dict;
+        for (auto &[k, v] : dict) {
+            std::unordered_map<char, Node> *cur = &root;
+            for (char i : k) {
+                if (!cur->count(i)) cur->emplace(i, Node());
+                cur->at(i).c = i;
+                cur = &cur->at(i).child;
+            }
+        }
+    }
+
+    void add(std::string const &word, std::string const &val) {
+        std::unordered_map<char, Node> *cur = &root;
+        for (char i : word) {
+            if (!cur->count(i)) cur->emplace(i, Node());
+            cur->at(i).c = i;
+            cur = &cur->at(i).child;
+        }
+        dict[word] = val;
+    }
+
+    std::string trans(std::string const &text) {
+        std::string ret = text, word, preword;
+        std::unordered_map<uint32_t, std::unordered_map<char, Node> *> p;
+        uint32_t rp, len;
+        std::vector<int> offset = {0};
+        for (uint32_t i = 0; i < text.size(); i++) {
+            std::vector<uint32_t> rm;
+            word.clear();
+            rp = 0;
+            len = 0;
+            p[i] = &root;
+            for (auto &[_, o] : p) {
+                if (o->count(text[i])) {
+                    o = &o->at(text[i]).child;
+                    if (!o->size()) {
+                        if (i - _ > len) {
+                            rp = _;
+                            len = i - _ + 1;
+                            preword = text.substr(_, len);
+                            word = dict[preword];
+                        }
+                        rm.push_back(_);
+                    }
+                    continue;
+                }
+                rm.push_back(_);
+            }
+            for (auto _ : rm)
+                p.erase(_);
+            if (word.size()) {
+                // std::cout << "找到待翻译文本：" << preword << std::endl;
+                ret.replace(
+                    rp - offset[rp], i - offset[i] - rp + offset[rp] + 1, word);
+                offset.push_back(offset[rp] + (int)len - word.size());
+                continue;
+            }
+            offset.push_back(offset.back());
+        }
+        // std::cout << "循环次数：" << c << std::endl;
+        return ret;
+    }
+};
+
+struct utils_translator3 {
+    struct Node {
+        char c;
+        bool is_end = false;
+        std::unordered_map<char, Node> child;
+    };
+
+    std::unordered_map<char, Node> root;
+    std::unordered_map<std::string, std::string> dict;
+
+    utils_translator3(std::unordered_map<std::string, std::string>& dict) : dict(dict) {
+        for (auto& [k, v] : dict) {
+            add_word_to_trie(k);
+        }
+    }
+
+    void add(const std::string& word, const std::string& val) {
+        add_word_to_trie(word);
+        dict[word] = val;
+    }
+
+    std::string trans(const std::string& text) {
+        std::string result;
+        const size_t n = text.size();
+        
+        for (size_t i = 0; i < n; ) {
+            size_t max_len = 0;
+            std::string replacement;
+            
+            auto* current = &root;
+            for (size_t j = i; j < n; ++j) {
+                const char c = text[j];
+                if (!current->count(c)) break;
+
+                Node& node = current->at(c);
+                if (node.is_end) {
+                    if (auto it = dict.find(text.substr(i, j-i+1)); it != dict.end()) {
+                        max_len = j - i + 1;
+                        replacement = it->second;
+                    }
+                }
+                current = &node.child;
+            }
+
+            if (max_len) {
+                result += replacement;
+                i += max_len;
+            } else {
+                result += text[i];
+                ++i;
+            }
+        }
+        
+        return result;
+    }
+
+private:
+    void add_word_to_trie(const std::string& word) {
+        auto* current = &root;
+        for (size_t i = 0; i < word.size(); ++i) {
+            const char c = word[i];
+            if (!current->count(c)) {
+                current->emplace(c, Node{c});
+            }
+            Node& node = current->at(c);
+            if (i == word.size()-1) {
+                node.is_end = true;
+            }
+            current = &node.child;
+        }
+    }
+};
+
+inline std::string utils_url_encode(const std::string &str) {
+    std::ostringstream escaped;
+    escaped.fill('0'); // fill with leading zeros
+    escaped << std::hex;
+
+    for (char ch : str) {
+        // Printable ASCII characters and alphanumeric characters do not need
+        // encoding
+        if (isalnum(static_cast<unsigned char>(ch)) ||
+            strchr(" -_.!~*'()", ch)) {
+            escaped << ch;
+        }
+        else {
+            escaped << '%' << std::setw(2)
+                    << static_cast<int>(static_cast<unsigned char>(ch));
+        }
+    }
+    return escaped.str();
+}
+
+inline std::string utils_url_decode(const std::string &str) {
+    std::ostringstream decoded;
+    std::istringstream encoded(str);
+    char ch;
+    while (encoded.get(ch)) {
+        if (ch == '%' && encoded.peek() != std::istream::traits_type::eof()) {
+            // Read the next two characters as a hex number
+            char hex[3] = {0};
+            encoded.get(hex, 3);
+            int value = std::stoi(hex, nullptr, 16);
+            if (value == -1) {
+                throw std::invalid_argument("Invalid hex sequence in URL");
+            }
+            decoded << static_cast<char>(value);
+        }
+        else if (ch == '+') {
+            // '+' should be converted to ' ' (space)
+            decoded << ' ';
+        }
+        else {
+            // All other characters are added directly to the output
+            decoded << ch;
+        }
+    }
+    return decoded.str();
+}
+
+class utils_timer {
+    public:
+    utils_timer() {
+        std::cout << "开始计时" << std::endl;
+    }
+
+    ~utils_timer() {
+        std::cout << std::endl
+                  << "总用时: " << t << " ms" << "  平均：" << (t / c) << "ms"
+                  << std::endl;
+    }
+
+    void beg() {
+        start = std::chrono::high_resolution_clock::now();
+        c++;
+    }
+
+    void end() {
+        auto ed = std::chrono::high_resolution_clock::now();
+        std::chrono::milliseconds elapsed =
+            std::chrono::duration_cast<std::chrono::milliseconds>(ed - start);
+        t += elapsed.count();
+        std::cout << elapsed.count() << " " << std::flush;
+    }
+
+    private:
+    std::chrono::high_resolution_clock::time_point start;
+    uint32_t c = 0;
+    uint32_t t = 0;
+};

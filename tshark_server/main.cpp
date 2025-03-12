@@ -1,10 +1,13 @@
+#include "mutils.h"
+#include "oatpp/network/Url.hpp"
+#include "tshark_info.h"
+#include "tshark_manager.h"
 #include <chrono>
 #include <csignal>
 #include <cstdint>
 #include <future>
 #include <loguru.hpp>
 #include <memory>
-#include <mutils.h>
 #include <oatpp/core/Types.hpp>
 #include <oatpp/core/base/Environment.hpp>
 #include <oatpp/core/data/mapping/type/Object.hpp>
@@ -25,8 +28,6 @@
 #include <oatpp/web/server/interceptor/RequestInterceptor.hpp>
 #include <oatpp/web/server/interceptor/ResponseInterceptor.hpp>
 #include <string>
-#include <tshark_info.h>
-#include <tshark_manager.h>
 
 TSharkManager m;
 
@@ -68,16 +69,15 @@ struct Controller : public oatpp::web::server::api::ApiController {
         std::future<std::vector<IfaceInfo>> infos;
         Action act() override {
             if (!infos.valid()) infos = m.interfaces_get_info();
-            auto ret = DTO_IfaceInfos::createShared();
-            ret->iface = {};
-            while (true) {
+            if (infos.valid()) {
                 std::future_status stat =
                     infos.wait_for(std::chrono::seconds(0));
                 if (stat == std::future_status::timeout) {
                     return repeat();
                 }
-                break;
             }
+            auto ret = DTO_IfaceInfos::createShared();
+            ret->iface = {};
             for (auto const &i : infos.get()) {
                 auto t = DTO_IfaceInfo::createShared();
                 t->name = i.name;
@@ -97,16 +97,15 @@ struct Controller : public oatpp::web::server::api::ApiController {
         ENDPOINT_ASYNC_INIT(interfaces_monitor_start);
         std::future<bool> res;
         Action act() override {
-            auto ret = DTO_Status::createShared();
             if (!res.valid() && !m.interfaces_activity_monitor_is_running())
                 res = m.interfaces_activity_monitor_start();
-            while (res.valid()) {
+            if (res.valid()) {
                 std::future_status stat = res.wait_for(std::chrono::seconds(0));
                 if (stat == std::future_status::timeout) {
                     return repeat();
                 }
-                break;
             }
+            auto ret = DTO_Status::createShared();
             if (res.valid()) {
                 if (res.get()) {
                     ret->code = DTO_Status::SUCCESS;
@@ -132,12 +131,11 @@ struct Controller : public oatpp::web::server::api::ApiController {
         Action act() override {
             auto ret = DTO_Status::createShared();
             if (!res.valid()) res = m.interfaces_activity_monitor_stop();
-            while (res.valid()) {
+            if (res.valid()) {
                 std::future_status stat = res.wait_for(std::chrono::seconds(0));
                 if (stat == std::future_status::timeout) {
                     return repeat();
                 }
-                break;
             }
             if (res.get()) {
                 ret->code = DTO_Status::SUCCESS;
@@ -172,12 +170,11 @@ struct Controller : public oatpp::web::server::api::ApiController {
             auto ret = DTO_Status::createShared();
             if (!res.valid() && !m.capture_is_running())
                 res = m.capture_start(ifname);
-            while (res.valid()) {
+            if (res.valid()) {
                 std::future_status stat = res.wait_for(std::chrono::seconds(0));
                 if (stat == std::future_status::timeout) {
                     return repeat();
                 }
-                break;
             }
             if (res.valid()) {
                 if (res.get()) {
@@ -202,22 +199,21 @@ struct Controller : public oatpp::web::server::api::ApiController {
         ENDPOINT_ASYNC_INIT(capture_load_file);
         std::future<bool> res;
         Action act() override {
-            std::string path = request->getQueryParameter("path");
+            std::string path = utils_url_decode(request->getQueryParameter("path"));
             auto ret = DTO_Status::createShared();
             if (!res.valid()) res = m.capture_from_file(path);
-            while (true) {
+            if (res.valid()) {
                 std::future_status stat = res.wait_for(std::chrono::seconds(0));
                 if (stat == std::future_status::timeout) {
                     return repeat();
                 }
-                break;
             }
             if (res.get()) {
-                ret->code = 200;
+                ret->code = DTO_Status::SUCCESS;
                 ret->msg = "加载完成!";
             }
             else {
-                ret->code = 201;
+                ret->code = DTO_Status::FAILURE;
                 ret->msg = "加载失败!";
             }
             return _return(
@@ -231,19 +227,18 @@ struct Controller : public oatpp::web::server::api::ApiController {
         Action act() override {
             auto ret = DTO_Status::createShared();
             if (!res.valid()) res = m.capture_stop();
-            while (true) {
+            if (res.valid()) {
                 std::future_status stat = res.wait_for(std::chrono::seconds(0));
                 if (stat == std::future_status::timeout) {
                     return repeat();
                 }
-                break;
             }
             if (res.get()) {
-                ret->code = 200;
+                ret->code = DTO_Status::SUCCESS;
                 ret->msg = "停止成功!";
             }
             else {
-                ret->code = 201;
+                ret->code = DTO_Status::FAILURE;
                 ret->msg = "停止失败!";
             }
             return _return(
