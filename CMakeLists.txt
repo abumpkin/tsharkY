@@ -7,6 +7,39 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "default build static library")
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_VERBOSE_MAKEFILE ON)
+
+if (LINUX)
+    set(CMAKE_GENERATOR "Unix Makefiles" CACHE INTERNAL "")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
+    set(CMAKE_CXX_FLAGS_RELEASE "-O2")
+    
+endif()
+if (WIN32)
+    set(CMAKE_GENERATOR "Visual Studio 17 2022" CACHE INTERNAL "")
+    set(CMAKE_GENERATOR_PLATFORM "x64" CACHE INTERNAL "")
+endif()
+if (MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "/Zi")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W4") # 设置为警告级别4
+    add_definitions(-D_CRT_SECURE_NO_WARNINGS) # 忽略某些安全相关的警告
+    set(CMAKE_CXX_FLAGS_RELEASE "/O2 /Ob2 /MD") # Release模式下的优化选项
+    set(CMAKE_CXX_FLAGS_DEBUG "/Od /Ob0 /MTd") # Debug模式下的非优化选项
+    add_definitions(-DWIN32 -D_WINDOWS)
+endif()
+
+# 定义一个名为 clean_build 的自定义目标
+add_custom_target(clean_build
+    # 使用 COMMAND 指定要执行的操作
+    COMMAND ${CMAKE_COMMAND} -E remove_directory ${CMAKE_BINARY_DIR}
+    COMMENT "Removing build directory: ${CMAKE_BINARY_DIR}"
+    VERBATIM
+)
+
+# 设置该目标为默认不构建，除非被显式调用
+set_target_properties(clean_build PROPERTIES FOLDER "Utilities")
 
 ###############################################################################
 # include list
@@ -61,7 +94,6 @@ load_3rd(RapidJSON)
 # 配置 ip2region
 set(IP2REGION_SRC
     3rd/ip2region/binding/cpp/xdb_search.cc
-    3rd/ip2region/binding/cpp/xdb_bench.cc
 )
 add_library(ip2region STATIC ${IP2REGION_SRC})
 set_target_properties(ip2region PROPERTIES ARCHIVE_OUTPUT_DIRECTORY ip2region)

@@ -1,4 +1,5 @@
 #include "mutils.h"
+#include "tshark_info.h"
 #include <cstdint>
 #include <iostream>
 #include <string>
@@ -134,6 +135,6 @@ int main() {
     std::string ori = "General information";
     std::cout << "原字符串：" << ori << std::endl;
     std::cout << "长度：" << ori.size() << std::endl;
-    ori = utils::FieldTranslator.trans(ori);
+    ori = FieldTranslator.trans(ori);
     std::cout << "翻译结果：" << ori << std::endl;
 }

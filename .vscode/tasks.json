@@ -1,51 +1,49 @@
 {
-    // See https://go.microsoft.com/fwlink/?LinkId=733558
-    // for the documentation about the tasks.json format
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "Clean",
-            "type": "shell",
-            "command": [
-                "rm -rf ${workspaceFolder}/build",
-            ],
-        },
-        {
-            "label": "生成 Release 编译",
-            "type": "shell",
-            "command": [
-                "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1 --preset=Release",
-                "&&",
-                "cmake --build build"
-            ],
-            "dependsOn": ["Clean"]
-        },
-        {
-            "label": "生成 Debug 构建",
-            "type": "shell",
-            "command": [
-                "cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=1 --preset=Debug",
-                "&&",
-                "cmake --build build --target help"
-            ],
-        },
-        {
-            "label": "生成当前 test",
-            "type": "shell",
-            "dependsOrder": "sequence",
-            "dependsOn": "生成 Debug 构建",
-            "command": [
-                "cmake --build build --target ${fileBasenameNoExtension} -v"
-            ],
-        },
-        {
-            "label": "生成 tshark_server",
-            "type": "shell",
-            "dependsOrder": "sequence",
-            "dependsOn": "生成 Debug 构建",
-            "command": [
-                "cmake --build build --target tshark_server -v"
-            ],
-        }
-    ]
+  // See https://go.microsoft.com/fwlink/?LinkId=733558
+  // for the documentation about the tasks.json format
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Clean",
+      "type": "shell",
+      "command": [
+        "cmake -B build --fresh",
+        "&&",
+        "cmake --build build --target clean_build"
+      ]
+    },
+    {
+      "label": "生成 Release 编译",
+      "type": "shell",
+      "command": [
+        "cmake -B build -DCMAKE_BUILD_TYPE=Release",
+        "&&",
+        "cmake --build build"
+      ],
+      "dependsOn": ["Clean"]
+    },
+    {
+      "label": "生成 Debug 构建",
+      "type": "shell",
+      "command": [
+        "cmake -B build -DCMAKE_BUILD_TYPE=Debug",
+        "&&",
+        "cmake --build build --target help"
+      ]
+    },
+    {
+      "label": "生成当前 test",
+      "type": "shell",
+      "dependsOrder": "sequence",
+      "dependsOn": "生成 Debug 构建",
+      "command": ["cmake --build build --target ${fileBasenameNoExtension} -v"]
+    },
+    {
+      "label": "生成 tshark_server",
+      "type": "shell",
+      "dependsOrder": "sequence",
+      "dependsOn": "生成 Debug 构建",
+      "command": ["cmake --build build --target tshark_server -v"]
+    }
+  ]
 }

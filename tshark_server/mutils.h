@@ -93,9 +93,13 @@ inline std::vector<std::string> const utils_split_str(
 inline std::string const utils_join_str(
     std::vector<std::string> const &strs, std::string const &sep) {
     std::string ret;
+    if (strs.empty()) return ret;
+    if (strs.size() == 1) return strs[0];
     for (auto &i : strs) {
-        ret.append(sep);
-        ret.append(i);
+        if (!i.empty()) {
+            ret.append(sep);
+            ret.append(i);
+        }
     }
     return ret.substr(sep.size());
 }
@@ -137,11 +141,7 @@ inline std::string const utils_ip2region(std::string ip) {
     if (ret.find("invalid") != std::string::npos) return "";
     if (ret.find("内网") != std::string::npos) return "内网";
     ret = utils_replace_str_all(ret, "0", "");
-    std::vector<std::string> parts;
-    for (auto &i : utils_split_str(ret, "|")) {
-        if (i.empty()) continue;
-        parts.push_back(i);
-    }
+    std::vector<std::string> parts = utils_split_str(ret, "|");
     parts.pop_back();
     ret = utils_join_str(parts, "-");
     return ret;
