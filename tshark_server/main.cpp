@@ -165,7 +165,7 @@ struct Controller : public oatpp::web::server::api::ApiController {
         ENDPOINT_ASYNC_INIT(capture_start);
         std::future<bool> res;
         Action act() override {
-            std::string ifname = request->getQueryParameter("if");
+            std::string ifname = request->getQueryParameter("if", "");
             auto ret = DTO_Status::createShared();
             if (!res.valid() && !m.capture_is_running())
                 res = m.capture_start(ifname);
@@ -185,7 +185,7 @@ struct Controller : public oatpp::web::server::api::ApiController {
                     ret->msg = "启动失败!";
                 }
             }
-            else if (m.interfaces_activity_monitor_is_running()) {
+            else if (m.capture_is_running()) {
                 ret->code = DTO_Status::RUNNING;
                 ret->msg = "捕获运行中!";
             }

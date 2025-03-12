@@ -1,18 +1,14 @@
 
+#include "analysis.h"
 #include "mutils.h"
 #include "parser_stream.h"
 #include "tshark_info.h"
 #include "tshark_manager.h"
 #include "unistream.h"
-#include <chrono>
 #include <memory>
-#include <thread>
 
-int main() {
-    auto p = [](std::shared_ptr<Packet> p) {
-        std::cout << p->to_json() << std::endl;
-    };
-    std::string path = "dump_data/capture.pcap";
+std::string path = "dump_data/capture.pcap";
+void time_test() {
     {
         utils_timer t;
         int c = 5;
@@ -30,36 +26,41 @@ int main() {
     }
     {
         utils_timer t;
-        int c = 10;
+        int c = 5;
         while (c--) {
             t.beg();
-            std::shared_ptr<ParserStreamPacketBrief<UniStreamDualPipeU>> ps =
-                std::make_shared<ParserStreamPacketBrief<UniStreamDualPipeU>>(p);
+            std::shared_ptr<ParserStreamPacket> ps =
+                std::make_shared<ParserStreamPacket>();
             std::shared_ptr<UniStreamInterface> data =
                 std::make_shared<UniStreamFile>(path);
             SharkPcapLoader loader{data};
-            loader.register_parser_streams(ps);
-            loader.load();
+            loader.load({ps});
             t.end();
             // std::cout << ps->packets_list.size() << std::endl;
         }
     }
-    // {
-    //     utils_timer t;
-    //     int c = 5;
-    //     while (c--) {
-    //         t.beg();
-    //         std::shared_ptr<ParserStreamPacketBrief<UniStreamPipeUnblocked>>
-    //             ps = std::make_shared<
-    //                 ParserStreamPacketBrief<UniStreamPipeUnblocked>>();
-    //         std::shared_ptr<UniStreamInterface> data =
-    //             std::make_shared<UniStreamFile>(path);
-    //         SharkPcapLoader loader{data};
-    //         loader.register_parser_streams(ps);
-    //         loader.load();
-    //         t.end();
-    //         // std::cout << ps->packets_list.size() << std::endl;
-    //     }
-    // }
+}
+
+void print_test() {
+    auto p = [](std::shared_ptr<Packet> p) {
+        std::cout << p->to_json() << std::endl;
+    };
+    std::shared_ptr<ParserStreamPacket> ps =
+        std::make_shared<ParserStreamPacket>(p);
+    std::shared_ptr<UniStreamInterface> data =
+        std::make_shared<UniStreamFile>(path);
+    SharkPcapLoader loader{data};
+    loader.load({ps});
+}
+
+int main() {
+    std::shared_ptr<ParserStreamPacket> ps =
+        std::make_shared<ParserStreamPacket>();
+    std::shared_ptr<UniStreamInterface> data =
+        std::make_shared<UniStreamFile>(path);
+    SharkPcapLoader loader{data};
+    loader.load({ps});
+    std::unique_ptr<PacketDefineDecode> dec = Analyzer::packet_detail(ps->packets_list[0]);
+    std::cout << dec->to_json() << std::endl;
     return 0;
 }

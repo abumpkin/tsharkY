@@ -44,8 +44,7 @@ struct ParserStream : virtual UniStreamInterface {
     virtual void wait_done() = 0;
 };
 
-template <typename T = UniStreamDualPipeU>
-struct ParserStreamPacketBrief : ParserStream, T {
+struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
     struct CMD_Fields {
         char const *frame_number = "frame.number";
         char const *frame_timestamp = "frame.time_epoch";
@@ -63,6 +62,7 @@ struct ParserStreamPacketBrief : ParserStream, T {
     constexpr static const uint32_t CMD_FIELD_NUM =
         sizeof(CMD_Fields) / sizeof(char const *);
     using PacketHandler = std::function<void(std::shared_ptr<Packet>)>;
+    std::shared_ptr<std::vector<char>> fixed;
     std::vector<std::shared_ptr<Packet>> packets_list;
     std::queue<std::shared_ptr<Packet>> packets_pending;
     volatile std::atomic_bool stop_ctl;
@@ -72,10 +72,10 @@ struct ParserStreamPacketBrief : ParserStream, T {
     PacketHandler handler;
 
     protected:
-    ParserStreamPacketBrief(std::string const &cmd) : T(cmd) {}
+    ParserStreamPacket(std::string const &cmd) : UniStreamDualPipeU(cmd) {}
 
     public:
-    ParserStreamPacketBrief(PacketHandler handler = nullptr) : stop_ctl(false) {
+    ParserStreamPacket(PacketHandler handler = nullptr) : stop_ctl(false) {
         CMD_Fields cmd_field;
         std::vector<std::string> cmd_args = {
             TSHARK_PATH " -Q -l -r - -T fields"};
@@ -83,18 +83,22 @@ struct ParserStreamPacketBrief : ParserStream, T {
             cmd_args.push_back("-e");
             cmd_args.push_back(reinterpret_cast<char const **>(&cmd_field)[i]);
         }
-        new (this)(ParserStreamPacketBrief)(utils_join_str(cmd_args, " "));
+        new (this)(ParserStreamPacket)(utils_join_str(cmd_args, " "));
         this->handler = handler;
         p_t = std::make_unique<std::thread>(thread, this);
     }
 
-    virtual void packet_arrived(std::vector<char> const &,
+    virtual void packet_arrived(std::vector<char> const &fixed,
         std::vector<char> const &block, uint32_t cap_off,
         uint32_t cap_len) override {
         std::shared_ptr<Packet> packet = std::make_shared<Packet>();
+        if (!this->fixed)
+            this->fixed = std::make_shared<std::vector<char>>(fixed);
         // 包数据 data
-        packet->data = std::string(
-            block.data() + cap_off, block.data() + cap_off + cap_len);
+        packet->cap_len = cap_len;
+        packet->cap_off = cap_off;
+        packet->data = block;
+        packet->fixed = this->fixed;
         // 加入待解析队列
         {
             std::lock_guard<std::mutex> lock(t_m);
@@ -127,7 +131,7 @@ struct ParserStreamPacketBrief : ParserStream, T {
     }
 
     // 解析线程
-    static void thread(ParserStreamPacketBrief *p) {
+    static void thread(ParserStreamPacket *p) {
         using namespace std::chrono_literals;
         std::string explain;
         StreamBuf buf;
@@ -139,7 +143,7 @@ struct ParserStreamPacketBrief : ParserStream, T {
                 if (rd_len) buf.write(data, rd_len);
             } while (!p->eof() && rd_len);
         };
-        while (true) {
+        while (!p->eof()) {
             read_some();
             if (p->packets_pending.empty()) {
                 if (p->stop_ctl) break;
@@ -217,7 +221,7 @@ struct ParserStreamPacketBrief : ParserStream, T {
         }
     }
 
-    virtual ~ParserStreamPacketBrief() {
+    virtual ~ParserStreamPacket() {
         stop_ctl = true;
         if (p_t && p_t->joinable()) {
             p_t->join();
@@ -274,11 +278,11 @@ struct ParserStreamPacketDetail : ParserStream, UniStreamDualPipeU {
             } while (!p->eof() && rd_len);
         };
         std::string xml;
-        while (true) {
+        while (!p->eof()) {
             read_some();
             if (!p->packets_pending) {
                 if (p->stop_ctl) break;
-                std::this_thread::sleep_for(1ms);
+                std::this_thread::yield();
                 continue;
             }
             std::shared_ptr<PacketDefineDecode> packet;

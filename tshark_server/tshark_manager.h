@@ -27,11 +27,11 @@
 #include "traffic_statistics.h"
 #include "tshark_info.h"
 #include "unistream.h"
+#include "analysis.h"
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
-#include <functional>
 #include <future>
 #include <initializer_list>
 #include <loguru.hpp>
@@ -51,6 +51,8 @@ class TSharkManager;
 struct SharkCaptureThread;
 
 struct SharkLoader {
+    using ParserStreams = std::vector<std::shared_ptr<ParserStream>>;
+
     protected:
     volatile std::atomic_bool stop_ctl = false;
 
@@ -68,17 +70,20 @@ struct SharkLoader {
     SharkLoader(std::shared_ptr<UniStreamInterface> stream)
         : in_stream(stream) {}
 
-    template <typename... T>
-    void register_parser_streams(T const &...parsers) {
-        this->parsers =
-            std::initializer_list<std::shared_ptr<ParserStream>>{parsers...};
-        parser_stream = UniSyncR2W::Make(in_stream, parsers...);
-    }
-
-    virtual bool load() {
-        stop_ctl = false;
+    protected:
+    void register_parser_stream(std::shared_ptr<ParserStream> const &parser) {
+        parsers.push_back(parser);
         if (!this->parser_stream) {
             this->parser_stream = this->in_stream;
+        }
+        parser_stream = UniSyncR2W::Make(parser_stream, parser);
+    }
+
+    public:
+    virtual bool load(ParserStreams const &ps) {
+        stop_ctl = false;
+        for (auto &i : ps) {
+            register_parser_stream(i);
         }
         return false;
     }
@@ -126,8 +131,8 @@ struct SharkPcapngLoader : SharkLoader {
     SharkPcapngLoader(std::shared_ptr<UniStreamInterface> stream)
         : SharkLoader(stream) {}
 
-    virtual bool load() override {
-        SharkLoader::load();
+    virtual bool load(ParserStreams const &ps) override {
+        SharkLoader::load(ps);
         auto bin_stream = this->parser_stream;
         GeneralHeader section;
         EnhancedPacketBlockHeader packet_section;
@@ -144,8 +149,8 @@ struct SharkPcapngLoader : SharkLoader {
             using namespace std::chrono_literals;
             rd_len = 0;
             t = 0;
-            while (!stop_ctl && !bin_stream->eof() &&
-                   rd_len < sizeof(section)) {
+            while (
+                !stop_ctl && !bin_stream->eof() && rd_len < sizeof(section)) {
                 t = bin_stream->read_ub(
                     p_section + rd_len, sizeof(section) - rd_len);
                 rd_len += t;
@@ -161,12 +166,12 @@ struct SharkPcapngLoader : SharkLoader {
                     fixed_data.reserve(
                         fixed_data.size() + section.block_length);
                 }
-                memcpy(fixed_data.data() + fixed_data.size(), p_section,
-                    sizeof(GeneralHeader));
-                fixed_data.resize(fixed_data.size() + sizeof(GeneralHeader));
-                rd_len = bin_stream->read(fixed_data.data() + fixed_data.size(),
+                t = fixed_data.size();
+                fixed_data.resize(fixed_data.size() + section.block_length);
+                memcpy(fixed_data.data() + t, p_section, sizeof(GeneralHeader));
+                t += sizeof(GeneralHeader);
+                rd_len = bin_stream->read(fixed_data.data() + t,
                     section.block_length - sizeof(GeneralHeader));
-                fixed_data.resize(fixed_data.size() + rd_len);
                 if (!rd_len) {
                     LOG_F(ERROR, "pcapng wrong format");
                     break;
@@ -220,6 +225,8 @@ struct SharkPcapngLoader : SharkLoader {
                 }
                 continue;
             }
+            LOG_F(INFO, "block type: %X", section.block_type);
+
             rd_len = bin_stream->read_to_null(
                 section.block_length - sizeof(GeneralHeader));
             if (!rd_len) {
@@ -256,8 +263,8 @@ struct SharkPcapLoader : SharkLoader {
     SharkPcapLoader(std::shared_ptr<UniStreamInterface> stream)
         : SharkLoader(stream) {}
 
-    virtual bool load() override {
-        SharkLoader::load();
+    virtual bool load(ParserStreams const &ps) override {
+        SharkLoader::load(ps);
         auto bin_stream = parser_stream;
         PcapPacketHeader section;
         char *p_section = reinterpret_cast<char *>(&section);
@@ -330,7 +337,8 @@ struct SharkPcapLoader : SharkLoader {
 };
 
 struct SharkCaptureThread {
-    using LoaderConfig = std::function<void(std::shared_ptr<SharkLoader>)>;
+    // using LoaderConfig = std::function<void(std::shared_ptr<SharkLoader>)>;
+
     std::shared_ptr<SharkLoader> loader;
 
     private:
@@ -345,7 +353,8 @@ struct SharkCaptureThread {
     public:
     SharkCaptureThread() = default;
 
-    bool load_capture_file(std::filesystem::path path, LoaderConfig config) {
+    bool load_capture_file(
+        std::filesystem::path path, SharkLoader::ParserStreams ps) {
         std::string ext = path.extension().generic_string();
         utils_str_lowcase(ext);
         if (!std::filesystem::exists(path)) {
@@ -366,13 +375,12 @@ struct SharkCaptureThread {
         else if (ext == ".pcapng") {
             loader = std::make_shared<SharkPcapngLoader>(stream);
         }
-        if (config) config(loader);
-        loader->load();
+        loader->load(ps);
         return true;
     }
 
-    bool start_capture_blocked(LoaderConfig config, std::string if_name = "",
-        std::filesystem::path save_to = "") {
+    bool start_capture_blocked(SharkLoader::ParserStreams const &ps,
+        std::string if_name = "", std::filesystem::path save_to = "") {
         std::shared_ptr<UniStreamInterface> stream;
         std::string cmd = DUMPCAP_PATH " -Q -w -";
         if (!if_name.empty()) {
@@ -420,12 +428,11 @@ struct SharkCaptureThread {
         if (!loader) {
             loader = std::make_shared<SharkPcapngLoader>(stream);
         }
-        if (config) config(loader);
-        loader->load();
+        loader->load(ps);
         return true;
     }
 
-    std::future<bool> start_capture(LoaderConfig config,
+    std::future<bool> start_capture(SharkLoader::ParserStreams const &ps,
         std::string const &if_name = "", std::filesystem::path save_to = "") {
         std::future<bool> ret;
         if (t_t) {
@@ -450,8 +457,7 @@ struct SharkCaptureThread {
             stop_status = std::promise<bool>();
             ret = start_status.get_future();
         }
-        t_t = std::make_unique<std::thread>(
-            thread, this, config, if_name, save_to);
+        t_t = std::make_unique<std::thread>(thread, this, ps, if_name, save_to);
         return ret;
     }
 
@@ -487,15 +493,16 @@ struct SharkCaptureThread {
         return is_done_with_succeed;
     }
 
-    static void thread(SharkCaptureThread *const tobj, LoaderConfig config,
-        std::string if_name = "", std::filesystem::path save_to = "") {
+    static void thread(SharkCaptureThread *const tobj,
+        SharkLoader::ParserStreams ps, std::string if_name = "",
+        std::filesystem::path save_to = "") {
         {
             std::lock_guard<std::mutex> lock(tobj->t_m);
             tobj->is_capturing = true;
             tobj->start_status.set_value(true);
         }
         tobj->is_done_with_succeed =
-            tobj->start_capture_blocked(config, if_name, save_to);
+            tobj->start_capture_blocked(ps, if_name, save_to);
         {
             std::lock_guard<std::mutex> lock(tobj->t_m);
             tobj->is_capturing = false;
@@ -517,58 +524,23 @@ struct SharkCaptureThread {
 };
 
 class TSharkManager {
-
-    enum class CTLSIG : uint32_t {
-        NO_ACTION = 0,
-        START_CAPTURE,
-
-    } ctl_thread_sig;
-
     SharkCaptureThread capture_thread;
     InterfacesActivityThread statistics_thread;
 
-    std::shared_ptr<ParserStreamPacketBrief<>> ps_brief;
+    std::shared_ptr<ParserStreamPacket> ps_brief;
     std::shared_ptr<ParserStreamPacketDetail> ps_detail;
-
-    std::condition_variable ctl_cv;
-    std::mutex ctl_m;
-
-    SharkCaptureThread::LoaderConfig parser_config(
-        ParserStreamPacketBrief<>::PacketHandler brief_handler = nullptr,
-        ParserStreamPacketDetail::PacketHandler detail_handler = nullptr) {
-        ps_brief = std::make_shared<ParserStreamPacketBrief<>>(brief_handler);
-        ps_detail = std::make_shared<ParserStreamPacketDetail>(detail_handler);
-        return [=](std::shared_ptr<SharkLoader> loader) {
-            loader->register_parser_streams(ps_brief, ps_detail);
-        };
-    }
 
     public:
     TSharkManager() {}
-    static void thread(TSharkManager *const manager) {
-        std::unique_lock<std::mutex> lock(manager->ctl_m);
-        manager->ctl_cv.wait(lock, [&]() {
-            return manager->ctl_thread_sig != CTLSIG::NO_ACTION;
-        });
-        switch (manager->ctl_thread_sig) {
-        case CTLSIG::START_CAPTURE:
-            break;
-        default:
-            break;
-        }
-        manager->ctl_thread_sig = CTLSIG::NO_ACTION;
-    }
 
-    std::future<bool> capture_start(std::string const &if_name = "",
-        std::filesystem::path save_to = "",
-        ParserStreamPacketBrief<>::PacketHandler brief_handler = nullptr,
-        ParserStreamPacketDetail::PacketHandler detail_handler = nullptr) {
+    std::future<bool> capture_start(
+        std::string const &if_name = "", std::filesystem::path save_to = "") {
         if (capture_is_running())
             return std::async(std::launch::deferred, [] {
                 return false;
             });
-        return capture_thread.start_capture(
-            parser_config(brief_handler, detail_handler), if_name, save_to);
+        ps_brief = std::make_shared<ParserStreamPacket>();
+        return capture_thread.start_capture({ps_brief}, if_name, save_to);
     }
 
     std::future<bool> capture_stop() {
@@ -576,8 +548,9 @@ class TSharkManager {
     }
 
     std::future<bool> capture_from_file(std::filesystem::path path) {
+        ps_brief = std::make_shared<ParserStreamPacket>();
         return std::async(std::launch::async, [=]() {
-            return capture_thread.load_capture_file(path, parser_config());
+            return capture_thread.load_capture_file(path, {ps_brief});
         });
     }
 
@@ -603,9 +576,13 @@ class TSharkManager {
 
     std::string capture_get_detail(uint32_t pos) {
         std::string ret;
-        if (!ps_detail) return ret;
-        if (pos >= ps_detail->packets_list.size()) return ret;
-        return ps_detail->packets_list[pos]->to_json();
+        // if (!ps_detail) return ret;
+        // if (pos >= ps_detail->packets_list.size()) return ret;
+        // return ps_detail->packets_list[pos]->to_json();
+        if (!ps_brief) return ret;
+        if (pos >= ps_brief->packets_list.size()) return ret;
+        std::unique_ptr<PacketDefineDecode> dec = Analyzer::packet_detail(ps_brief->packets_list[pos]);
+        return dec->to_json();
     }
 
     std::future<std::vector<IfaceInfo>> interfaces_get_info() {

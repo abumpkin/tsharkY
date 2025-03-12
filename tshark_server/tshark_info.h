@@ -25,9 +25,10 @@
 #include "rapidjson/allocators.h"
 #include "rapidjson/document.h"
 #include <cstdint>
+#include <memory>
+#include <pugixml.hpp>
 #include <string>
 #include <vector>
-#include <pugixml.hpp>
 #ifndef TSHARK_PATH
 #define TSHARK_PATH "tshark"
 #endif
@@ -157,10 +158,10 @@ struct PacketDefineDecode {
         std::vector<Field> fields;
     };
 
-    using Packet = std::vector<Field>;
+    using PacketObj = std::vector<Field>;
 
     // private:
-    Packet packet;
+    PacketObj packet;
     uint32_t frame_number = 0;
 
     static std::vector<char> hex_to_data(char const *hex) {
@@ -234,10 +235,11 @@ struct PacketDefineDecode {
             x_attr = cur.attribute("showname");
             if (x_attr)
                 x_field.showname = FieldTranslator.trans(x_attr.value());
+            // if (x_attr)
+            //     x_field.showname = x_attr.value();
             x_attr = cur.attribute("show");
             if (x_attr) {
-                if (x_field.showname.empty())
-                    x_field.showname = x_attr.value();
+                if (x_field.showname.empty()) x_field.showname = x_attr.value();
                 if (x_field.name.empty()) x_field.name = x_attr.value();
                 // x_field.show = x_attr.value();
                 if (x_field.name == "frame.number")
@@ -370,7 +372,8 @@ struct PacketDefineDecode {
 //         fields.SetArray();
 //         obj.SetObject();
 //         obj.AddMember(
-//             "name", rapidjson::Value(field.name.c_str(), allocator), allocator);
+//             "name", rapidjson::Value(field.name.c_str(), allocator),
+//             allocator);
 //         obj.AddMember("showname",
 //             rapidjson::Value(field.showname.c_str(), allocator), allocator);
 //         obj.AddMember("pos", field.pos, allocator);
@@ -382,7 +385,8 @@ struct PacketDefineDecode {
 //         return obj;
 //     }
 
-//     rapidjson::Value to_json_obj(rapidjson::MemoryPoolAllocator<> &allocator) {
+//     rapidjson::Value to_json_obj(rapidjson::MemoryPoolAllocator<> &allocator)
+//     {
 //         rapidjson::Value json_obj;
 //         json_obj.SetArray();
 //         for (auto const &i : packet) {
@@ -415,6 +419,8 @@ struct PacketDefineDecode {
 // };
 
 struct Packet {
+    uint32_t cap_off;
+    uint32_t cap_len;
     uint32_t frame_number;
     std::string frame_timestamp;
     std::string frame_protocol;
@@ -427,7 +433,8 @@ struct Packet {
     std::string dst_ip;
     uint16_t src_port;
     uint16_t dst_port;
-    std::string data;
+    std::vector<char> data;
+    std::weak_ptr<std::vector<char>> fixed;
 
     rapidjson::Value to_json_obj(rapidjson::MemoryPoolAllocator<> &allocator) {
         rapidjson::Value pkt_obj;

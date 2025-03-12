@@ -6,6 +6,13 @@
 #include "unistream.h"
 #include <memory>
 
+
+// 翻译：1342                         +542ms
+// 解析xml 不翻译：800                 +240ms
+// 获取<packet> 不解析xml：560         +88ms
+// 缓存pdml 不获取<packet>：272        +7ms
+// 不缓存pdml + yield：265
+
 int main() {
     auto p = [](std::shared_ptr<PacketDefineDecode> p) {
         std::cout << p->to_json() << std::endl;
@@ -31,8 +38,7 @@ int main() {
             std::shared_ptr<UniStreamInterface> data =
                 std::make_shared<UniStreamFile>(path);
             SharkPcapLoader loader{data};
-            loader.register_parser_streams(ps);
-            loader.load();
+            loader.load({ps});
             t.end();
             // std::cout << ps->packets_list.size() << std::endl;
         }

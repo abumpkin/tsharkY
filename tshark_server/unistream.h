@@ -247,23 +247,22 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
     }
 
     void terminate() {
-        close_write();
 #ifdef _WIN32
         if (hProcess) {
+            CloseHandle(hChildStdoutRd);
+            CloseHandle(hChildStdinWr);
             TerminateProcess(hProcess, 0);
             CloseHandle(hProcess);
             CloseHandle(hThread);
-            CloseHandle(hChildStdoutRd);
-            CloseHandle(hChildStdinWr);
             hProcess = nullptr;
         }
 #else
         if (pid > 0) {
-            kill(pid, SIGINT);
-            kill(pid, SIGTERM);
-            waitpid(pid, nullptr, 0);
             close(childStdout);
             close(childStdin);
+            kill(pid, SIGTERM);
+            kill(pid, SIGKILL);
+            waitpid(pid, nullptr, 0);
             pid = -1;
         }
 #endif
