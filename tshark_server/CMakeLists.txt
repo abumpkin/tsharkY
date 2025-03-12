@@ -12,4 +12,5 @@ target_link_libraries(tshark_server PRIVATE
     Boost::process
     tinyxml2
     oatpp
+    pugixml-static
 )

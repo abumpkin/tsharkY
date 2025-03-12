@@ -33,7 +33,6 @@
 #include <mutex>
 #include <string>
 #include <thread>
-#include <tinyxml2.h>
 #include <unordered_map>
 #include <vector>
 

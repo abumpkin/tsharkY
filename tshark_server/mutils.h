@@ -39,7 +39,6 @@
 #include <queue>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 #include <xdb_search.h>
 
@@ -267,96 +266,6 @@ class ACTranslator {
     }
 };
 
-struct utils_translator {
-    struct Node {
-        std::vector<std::pair<char, Node>> children;
-        std::optional<std::string> value;
-
-        // 二分查找优化子节点访问 [[7]][[9]]
-        Node *find_child(char c) {
-            auto it = std::lower_bound(
-                children.begin(), children.end(), c, [](const auto &p, char c) {
-                    return p.first < c;
-                });
-            return (it != children.end() && it->first == c) ? &it->second
-                                                            : nullptr;
-        }
-    };
-
-    Node root;
-
-    utils_translator(const std::unordered_map<std::string, std::string> &dict) {
-        for (const auto &[key, val] : dict) {
-            Node *node = &root;
-            for (char c : key) {
-                auto *child = node->find_child(c);
-                if (!child) {
-                    node->children.emplace_back(c, Node());
-                    std::sort(node->children.begin(), node->children.end(),
-                        [](const auto &a, const auto &b) {
-                            return a.first < b.first;
-                        });
-                    child = &node->children.back().second;
-                }
-                node = child;
-            }
-            node->value = val;
-        }
-    }
-
-    std::string trans(const std::string &text) {
-        std::string result;
-        result.reserve(text.size()); // 预分配内存优化 [[3]][[6]]
-
-        std::vector<std::pair<int, Node *>>
-            active_nodes; // 缓存友好型数据结构 [[2]]
-        int last_pos = 0;
-
-        for (int i = 0; i < text.size(); ++i) {
-            char c = text[i];
-            std::vector<std::pair<int, Node *>> new_nodes;
-            std::optional<std::pair<int, std::string>> best_match;
-
-            // 处理新起始节点
-            if (auto *child = root.find_child(c)) {
-                new_nodes.emplace_back(i, child);
-                if (child->value) best_match = {i, *child->value};
-            }
-
-            // 处理现有活跃节点
-            for (const auto &[start, node] : active_nodes) {
-                if (auto *child = node->find_child(c)) {
-                    new_nodes.emplace_back(start, child);
-                    if (child->value) {
-                        if (!best_match ||
-                            (i - start + 1) > (best_match->first -
-                                                  best_match->second.size())) {
-                            best_match = {start, *child->value};
-                        }
-                    }
-                }
-            }
-
-            // 处理最佳匹配
-            if (best_match) {
-                result.append(text, last_pos, best_match->first - last_pos);
-                result.append(best_match->second);
-                last_pos = best_match->first + (i - best_match->first + 1);
-                new_nodes.clear(); // 避免重叠匹配 [[8]]
-            }
-
-            active_nodes = std::move(new_nodes);
-        }
-
-        // 添加剩余文本 [[3]]
-        if (last_pos < text.size()) {
-            result.append(text, last_pos, text.size() - last_pos);
-        }
-
-        return result;
-    }
-};
-
 struct utils_translator2 {
     struct Node {
         char c;
@@ -493,7 +402,7 @@ private:
         for (size_t i = 0; i < word.size(); ++i) {
             const char c = word[i];
             if (!current->count(c)) {
-                current->emplace(c, Node{c});
+                current->emplace(c, Node{c, false, {}});
             }
             Node& node = current->at(c);
             if (i == word.size()-1) {

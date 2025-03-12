@@ -30,7 +30,6 @@
 #include "tshark_info.h"
 #include "unistream.h"
 #include <atomic>
-#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>

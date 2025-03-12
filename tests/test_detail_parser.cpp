@@ -4,9 +4,7 @@
 #include "tshark_info.h"
 #include "tshark_manager.h"
 #include "unistream.h"
-#include <chrono>
 #include <memory>
-#include <thread>
 
 int main() {
     auto p = [](std::shared_ptr<PacketDefineDecode> p) {

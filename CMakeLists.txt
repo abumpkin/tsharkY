@@ -34,6 +34,10 @@ function(load_3rd tar)
     endif()
 endfunction()
 
+# pugixml
+add_subdirectory(3rd/pugixml)
+load_3rd(pugixml-static)
+
 # oatpp
 set(OATPP_INSTALL OFF CACHE BOOL "oatpp install target")
 set(OATPP_BUILD_TESTS OFF CACHE BOOL "oatpp test targets")

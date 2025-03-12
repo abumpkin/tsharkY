@@ -25,12 +25,10 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
-#include <regex>
 #include <shared_mutex>
 #include <stack>
 #include <string>
 #include <thread>
-#include <unordered_map>
 #include <vector>
 
 template <size_t SIZE = 4096>
@@ -280,7 +278,7 @@ class StreamBuf {
         size_t total_length = 0;
         bool found = false;
         Block *stop_block = nullptr;
-        size_t stop_offset = 0;
+        // size_t stop_offset = 0;
 
         Block *current_block = head.load(std::memory_order_acquire);
         while (current_block) {
@@ -297,7 +295,7 @@ class StreamBuf {
 
             // 在当前块中搜索字符
             const char *begin = current_block->data.data() + start;
-            const char *end = begin + available;
+            // const char *end = begin + available;
             const char *pos =
                 static_cast<const char *>(memchr(begin, chr, available));
 
@@ -307,7 +305,7 @@ class StreamBuf {
                 records.emplace_back(current_block, start, bytes);
                 total_length += bytes;
                 stop_block = current_block;
-                stop_offset = start + bytes;
+                // stop_offset = start + bytes;
                 found = true;
                 break;
             }

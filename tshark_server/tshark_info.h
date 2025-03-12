@@ -24,10 +24,10 @@
 #include "mutils.h"
 #include "rapidjson/allocators.h"
 #include "rapidjson/document.h"
-#include "tinyxml2.h"
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <pugixml.hpp>
 #ifndef TSHARK_PATH
 #define TSHARK_PATH "tshark"
 #endif
@@ -163,41 +163,6 @@ struct PacketDefineDecode {
     Packet packet;
     uint32_t frame_number = 0;
 
-    std::vector<PacketDefineDecode::Field> fill_fields(
-        tinyxml2::XMLElement *p) {
-        std::vector<PacketDefineDecode::Field> fields;
-        tinyxml2::XMLElement *cur = p;
-        tinyxml2::XMLAttribute const *x_attr;
-        do {
-            PacketDefineDecode::Field x_field;
-            x_attr = cur->FindAttribute("name");
-            if (x_attr) x_field.name = x_attr->Value();
-            x_attr = cur->FindAttribute("showname");
-            if (x_attr)
-                x_field.showname = FieldTranslator.trans(x_attr->Value());
-            // if (x_attr) x_field.showname = x_attr->Value();
-            x_attr = cur->FindAttribute("show");
-            if (x_attr) {
-                if (x_field.showname.empty())
-                    x_field.showname = x_attr->Value();
-                if (x_field.name.empty()) x_field.name = x_attr->Value();
-                // x_field.show = x_attr->Value();
-                if (x_field.name == "frame.number")
-                    frame_number = std::stoul(x_attr->Value());
-            }
-            x_attr = cur->FindAttribute("pos");
-            if (x_attr) x_field.pos = x_attr->UnsignedValue();
-            x_attr = cur->FindAttribute("size");
-            if (x_attr) x_field.size = x_attr->UnsignedValue();
-
-            if (cur->FirstChildElement()) {
-                x_field.fields = fill_fields(cur->FirstChildElement());
-            }
-            fields.push_back(x_field);
-        } while ((cur = cur->NextSiblingElement()));
-        return fields;
-    }
-
     static std::vector<char> hex_to_data(char const *hex) {
         uint32_t len = strlen(hex);
         std::vector<char> ret;
@@ -257,18 +222,52 @@ struct PacketDefineDecode {
         return json_obj;
     }
 
+    std::vector<PacketDefineDecode::Field> fill_fields(pugi::xml_node p) {
+        std::vector<PacketDefineDecode::Field> fields;
+        pugi::xml_node cur = p;
+        pugi::xml_attribute x_attr;
+        do {
+            PacketDefineDecode::Field x_field;
+            x_attr = cur.attribute("name");
+
+            if (x_attr) x_field.name = x_attr.value();
+            x_attr = cur.attribute("showname");
+            if (x_attr)
+                x_field.showname = FieldTranslator.trans(x_attr.value());
+            x_attr = cur.attribute("show");
+            if (x_attr) {
+                if (x_field.showname.empty())
+                    x_field.showname = x_attr.value();
+                if (x_field.name.empty()) x_field.name = x_attr.value();
+                // x_field.show = x_attr.value();
+                if (x_field.name == "frame.number")
+                    frame_number = std::stoul(x_attr.value());
+            }
+            x_attr = cur.attribute("pos");
+            if (x_attr) x_field.pos = x_attr.as_uint();
+            x_attr = cur.attribute("size");
+            if (x_attr) x_field.size = x_attr.as_uint();
+
+            if (cur.first_child()) {
+                x_field.fields = fill_fields(cur.first_child());
+            }
+            fields.push_back(x_field);
+        } while ((cur = cur.next_sibling()));
+        return fields;
+    }
+
     public:
-    PacketDefineDecode(std::string const &xml) {
-        tinyxml2::XMLDocument doc;
-        doc.Parse(xml.c_str());
-        tinyxml2::XMLElement *x_packet = doc.RootElement();
-        while (x_packet) {
-            if (x_packet->Name() == std::string("packet")) break;
-            x_packet = x_packet->FirstChildElement();
+    PacketDefineDecode(std::string &xml) {
+        pugi::xml_document doc;
+        pugi::xml_parse_result result =
+            doc.load_buffer_inplace(xml.data(), xml.size());
+        if (result.status != pugi::status_ok) {
+            throw std::runtime_error(result.description());
         }
+        pugi::xml_node x_packet = doc.child("packet");
         while (x_packet) {
-            packet = fill_fields(x_packet->FirstChildElement());
-            x_packet = x_packet->NextSiblingElement("packet");
+            packet = fill_fields(x_packet.first_child());
+            x_packet = x_packet.next_sibling("packet");
             if (packet.size()) break;
         }
     }
@@ -279,6 +278,141 @@ struct PacketDefineDecode {
         return utils_to_json(json_obj, pretty);
     }
 };
+
+// struct PacketDefineDecode {
+//     struct Field {
+//         std::string name;
+//         std::string showname;
+//         // std::string show;
+//         // std::string value;
+//         uint32_t pos;
+//         uint32_t size;
+//         // std::shared_ptr<std::vector<char>> data;
+//         std::vector<Field> fields;
+//     };
+
+//     using Packet = std::vector<Field>;
+
+//     // private:
+//     Packet packet;
+//     uint32_t frame_number = 0;
+
+//     std::vector<PacketDefineDecode::Field> fill_fields(
+//         tinyxml2::XMLElement *p) {
+//         std::vector<PacketDefineDecode::Field> fields;
+//         tinyxml2::XMLElement *cur = p;
+//         tinyxml2::XMLAttribute const *x_attr;
+//         do {
+//             PacketDefineDecode::Field x_field;
+//             x_attr = cur->FindAttribute("name");
+//             if (x_attr) x_field.name = x_attr->Value();
+//             x_attr = cur->FindAttribute("showname");
+//             if (x_attr)
+//                 x_field.showname = FieldTranslator.trans(x_attr->Value());
+//             // if (x_attr) x_field.showname = x_attr->Value();
+//             x_attr = cur->FindAttribute("show");
+//             if (x_attr) {
+//                 if (x_field.showname.empty())
+//                     x_field.showname = x_attr->Value();
+//                 if (x_field.name.empty()) x_field.name = x_attr->Value();
+//                 // x_field.show = x_attr->Value();
+//                 if (x_field.name == "frame.number")
+//                     frame_number = std::stoul(x_attr->Value());
+//             }
+//             x_attr = cur->FindAttribute("pos");
+//             if (x_attr) x_field.pos = x_attr->UnsignedValue();
+//             x_attr = cur->FindAttribute("size");
+//             if (x_attr) x_field.size = x_attr->UnsignedValue();
+
+//             if (cur->FirstChildElement()) {
+//                 x_field.fields = fill_fields(cur->FirstChildElement());
+//             }
+//             fields.push_back(x_field);
+//         } while ((cur = cur->NextSiblingElement()));
+//         return fields;
+//     }
+
+//     static std::vector<char> hex_to_data(char const *hex) {
+//         uint32_t len = strlen(hex);
+//         std::vector<char> ret;
+//         uint32_t i = 0;
+//         const char v[128] = {
+//             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0-9 (非打印字符)
+//             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 10-19
+//             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 20-29
+//             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 30-39
+//             0, 0, 0, 0, 0, 0, 0, 0,       // 40-47
+//             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, // 48-57 ('0'-'9')
+//             0, 0, 0, 0, 0, 0, 0,          // 58-64
+//             10, 11, 12, 13, 14, 15,       // 65-70 ('A'-'F')
+//             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 71-80
+//             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 81-90
+//             0, 0, 0, 0, 0, 0,             // 91-96
+//             10, 11, 12, 13, 14, 15,       // 97-102 ('a'-'f')
+//             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 103-112
+//             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 113-122
+//             0, 0, 0, 0, 0                 // 123-126
+//         };
+//         uint8_t c = 0;
+//         if (len % 2) ret.push_back(v[(uint8_t)hex[i++]]);
+//         while (i < len) {
+//             c = v[(uint8_t)hex[i++]] << 4;
+//             c = v[(uint8_t)hex[i++]] | c;
+//             ret.push_back(c);
+//         }
+//         return ret;
+//     }
+
+//     static rapidjson::Value build_json_obj(
+//         rapidjson::MemoryPoolAllocator<> &allocator, Field const &field) {
+//         rapidjson::Value obj;
+//         rapidjson::Value fields;
+//         fields.SetArray();
+//         obj.SetObject();
+//         obj.AddMember(
+//             "name", rapidjson::Value(field.name.c_str(), allocator), allocator);
+//         obj.AddMember("showname",
+//             rapidjson::Value(field.showname.c_str(), allocator), allocator);
+//         obj.AddMember("pos", field.pos, allocator);
+//         obj.AddMember("size", field.size, allocator);
+//         for (auto const &i : field.fields) {
+//             fields.PushBack(build_json_obj(allocator, i), allocator);
+//         }
+//         obj.AddMember("fields", fields, allocator);
+//         return obj;
+//     }
+
+//     rapidjson::Value to_json_obj(rapidjson::MemoryPoolAllocator<> &allocator) {
+//         rapidjson::Value json_obj;
+//         json_obj.SetArray();
+//         for (auto const &i : packet) {
+//             json_obj.PushBack(build_json_obj(allocator, i), allocator);
+//         }
+//         return json_obj;
+//     }
+
+//     public:
+//     PacketDefineDecode(std::string const &xml) {
+//         tinyxml2::XMLDocument doc;
+//         doc.Parse(xml.c_str());
+//         tinyxml2::XMLElement *x_packet = doc.RootElement();
+//         while (x_packet) {
+//             if (x_packet->Name() == std::string("packet")) break;
+//             x_packet = x_packet->FirstChildElement();
+//         }
+//         while (x_packet) {
+//             packet = fill_fields(x_packet->FirstChildElement());
+//             x_packet = x_packet->NextSiblingElement("packet");
+//             if (packet.size()) break;
+//         }
+//     }
+
+//     std::string to_json(bool pretty = false) {
+//         rapidjson::MemoryPoolAllocator<> allocator;
+//         rapidjson::Value json_obj = to_json_obj(allocator);
+//         return utils_to_json(json_obj, pretty);
+//     }
+// };
 
 struct Packet {
     uint32_t frame_number;
