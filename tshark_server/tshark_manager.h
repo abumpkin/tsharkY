@@ -21,13 +21,14 @@
  */
 
 #pragma once
+#include "analysis.h"
+#include "database.h"
 #include "mutils.h"
 #include "parser_stream.h"
 #include "rapidjson/allocators.h"
 #include "traffic_statistics.h"
 #include "tshark_info.h"
 #include "unistream.h"
-#include "analysis.h"
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -527,11 +528,39 @@ class TSharkManager {
     SharkCaptureThread capture_thread;
     InterfacesActivityThread statistics_thread;
 
-    std::shared_ptr<ParserStreamPacket> ps_brief;
-    std::shared_ptr<ParserStreamPacketDetail> ps_detail;
+    std::shared_ptr<ParserStreamPacket> ps;
+    std::vector<std::shared_ptr<Packet>> packets_list;
+    std::shared_ptr<TsharkDB> db;
+    std::unique_ptr<DBBriefTable> db_brief;
+
+    // 重新创建解析流
+    void recreate_ps() {
+        // 包解析结果处理函数
+        auto handler = [&](std::shared_ptr<Packet> p,
+                           ParserStreamPacket::Status st) {
+            // 暂时无新数据包到达，提交事务
+            if (st == ParserStreamPacket::Status::PKT_NONE) {
+                db_brief->commit_transaction();
+            }
+            // 新数据包到达，进行存储
+            if (st == ParserStreamPacket::Status::PKT_ARRIVE) {
+                // 开始事务
+                if (!db_brief->has_transaction()) db_brief->start_transaction();
+                // 插入数据到数据库
+                db_brief->insert(p);
+                // 清除包数据
+                p->data.reset();
+                packets_list.push_back(p);
+            }
+        };
+        ps = std::make_shared<ParserStreamPacket>(handler);
+    }
 
     public:
-    TSharkManager() {}
+    TSharkManager() {
+        db = TsharkDB::connect("dump_data/temp.db3");
+        db_brief = std::make_unique<DBBriefTable>(db);
+    }
 
     std::future<bool> capture_start(
         std::string const &if_name = "", std::filesystem::path save_to = "") {
@@ -539,8 +568,8 @@ class TSharkManager {
             return std::async(std::launch::deferred, [] {
                 return false;
             });
-        ps_brief = std::make_shared<ParserStreamPacket>();
-        return capture_thread.start_capture({ps_brief}, if_name, save_to);
+        recreate_ps();
+        return capture_thread.start_capture({ps}, if_name, save_to);
     }
 
     std::future<bool> capture_stop() {
@@ -548,9 +577,9 @@ class TSharkManager {
     }
 
     std::future<bool> capture_from_file(std::filesystem::path path) {
-        ps_brief = std::make_shared<ParserStreamPacket>();
+        recreate_ps();
         return std::async(std::launch::async, [=]() {
-            return capture_thread.load_capture_file(path, {ps_brief});
+            return capture_thread.load_capture_file(path, {ps});
         });
     }
 
@@ -560,15 +589,15 @@ class TSharkManager {
 
     std::string capture_get_brief(uint32_t pos = 0, uint32_t len = 0) {
         std::string ret;
-        if (!ps_brief) return ret;
-        uint32_t total = ps_brief->packets_list.size();
+        if (!ps) return ret;
+        uint32_t total = packets_list.size();
         if (pos > total) return ret;
         if (pos + len > total || len == 0) len = total - pos;
         rapidjson::Document obj;
         rapidjson::MemoryPoolAllocator<> allocator;
         obj.SetArray();
-        for (auto i = ps_brief->packets_list.cbegin() + pos;
-            i != ps_brief->packets_list.cbegin() + pos + len; i++) {
+        for (auto i = packets_list.cbegin() + pos;
+            i != packets_list.cbegin() + pos + len; i++) {
             obj.PushBack(i->get()->to_json_obj(allocator), allocator);
         }
         return utils_to_json(obj, true);
@@ -579,9 +608,10 @@ class TSharkManager {
         // if (!ps_detail) return ret;
         // if (pos >= ps_detail->packets_list.size()) return ret;
         // return ps_detail->packets_list[pos]->to_json();
-        if (!ps_brief) return ret;
-        if (pos >= ps_brief->packets_list.size()) return ret;
-        std::unique_ptr<PacketDefineDecode> dec = Analyzer::packet_detail(ps_brief->packets_list[pos]);
+        if (!ps) return ret;
+        if (pos >= packets_list.size()) return ret;
+        std::unique_ptr<PacketDefineDecode> dec =
+            Analyzer::packet_detail(packets_list[pos]);
         return dec->to_json();
     }
 

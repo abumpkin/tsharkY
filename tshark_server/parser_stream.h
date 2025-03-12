@@ -45,6 +45,10 @@ struct ParserStream : virtual UniStreamInterface {
 };
 
 struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
+    enum class Status {
+        PKT_NONE,
+        PKT_ARRIVE
+    };
     struct CMD_Fields {
         char const *frame_number = "frame.number";
         char const *frame_timestamp = "frame.time_epoch";
@@ -61,9 +65,9 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
     };
     constexpr static const uint32_t CMD_FIELD_NUM =
         sizeof(CMD_Fields) / sizeof(char const *);
-    using PacketHandler = std::function<void(std::shared_ptr<Packet>)>;
+    using PacketHandler = std::function<void(std::shared_ptr<Packet>, Status)>;
     std::shared_ptr<std::vector<char>> fixed;
-    std::vector<std::shared_ptr<Packet>> packets_list;
+    // std::vector<std::shared_ptr<Packet>> packets_list;
     std::queue<std::shared_ptr<Packet>> packets_pending;
     volatile std::atomic_bool stop_ctl;
     std::unique_ptr<std::thread> p_t;
@@ -97,7 +101,7 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
         // 包数据 data
         packet->cap_len = cap_len;
         packet->cap_off = cap_off;
-        packet->data = block;
+        packet->data = std::make_shared<std::vector<char>>(block);
         packet->fixed = this->fixed;
         // 加入待解析队列
         {
@@ -133,6 +137,7 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
     // 解析线程
     static void thread(ParserStreamPacket *p) {
         using namespace std::chrono_literals;
+        uint32_t idx = 0;
         std::string explain;
         StreamBuf buf;
         char data[512];
@@ -147,6 +152,9 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
             read_some();
             if (p->packets_pending.empty()) {
                 if (p->stop_ctl) break;
+                if (p->handler) {
+                    p->handler(nullptr, Status::PKT_NONE);
+                }
                 std::this_thread::sleep_for(1ms);
                 continue;
             }
@@ -179,10 +187,12 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
                         fields[i].c_str();
             }
 
+            // index
+            packet->idx = idx++;
             // frame
-            packet->frame_number = strlen(cmd_field.frame_number)
-                                       ? std::stoi(cmd_field.frame_number)
-                                       : 0;
+            // packet->frame_number = strlen(cmd_field.frame_number)
+            //                            ? std::stoi(cmd_field.frame_number)
+            //                            : 0;
             packet->frame_timestamp = cmd_field.frame_timestamp;
             packet->frame_protocol = cmd_field.frame_protocol;
             packet->frame_info = cmd_field.frame_info;
@@ -213,10 +223,10 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
             packet->dst_location = utils_ip2region(packet->dst_ip);
 
             // 保存
-            p->packets_list.push_back(packet);
+            // p->packets_list.push_back(packet);
             // 其他处理
             if (p->handler) {
-                p->handler(packet);
+                p->handler(packet, Status::PKT_ARRIVE);
             }
         }
     }

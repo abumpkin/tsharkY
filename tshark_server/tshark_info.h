@@ -162,7 +162,7 @@ struct PacketDefineDecode {
 
     // private:
     PacketObj packet;
-    uint32_t frame_number = 0;
+    // uint32_t frame_number = 0;
 
     static std::vector<char> hex_to_data(char const *hex) {
         uint32_t len = strlen(hex);
@@ -242,8 +242,8 @@ struct PacketDefineDecode {
                 if (x_field.showname.empty()) x_field.showname = x_attr.value();
                 if (x_field.name.empty()) x_field.name = x_attr.value();
                 // x_field.show = x_attr.value();
-                if (x_field.name == "frame.number")
-                    frame_number = std::stoul(x_attr.value());
+                // if (x_field.name == "frame.number")
+                //     frame_number = std::stoul(x_attr.value());
             }
             x_attr = cur.attribute("pos");
             if (x_attr) x_field.pos = x_attr.as_uint();
@@ -419,9 +419,10 @@ struct PacketDefineDecode {
 // };
 
 struct Packet {
+    uint32_t idx;
     uint32_t cap_off;
     uint32_t cap_len;
-    uint32_t frame_number;
+    // uint32_t frame_number;
     std::string frame_timestamp;
     std::string frame_protocol;
     std::string frame_info;
@@ -433,13 +434,14 @@ struct Packet {
     std::string dst_ip;
     uint16_t src_port;
     uint16_t dst_port;
-    std::vector<char> data;
+    std::shared_ptr<std::vector<char>> data;
     std::weak_ptr<std::vector<char>> fixed;
 
     rapidjson::Value to_json_obj(rapidjson::MemoryPoolAllocator<> &allocator) {
         rapidjson::Value pkt_obj;
         pkt_obj.SetObject();
-        pkt_obj.AddMember("frame_number", frame_number, allocator);
+        pkt_obj.AddMember("idx", idx, allocator);
+        // pkt_obj.AddMember("frame_number", frame_number, allocator);
         pkt_obj.AddMember("frame_timestamp",
             rapidjson::Value(frame_timestamp.c_str(), allocator), allocator);
         pkt_obj.AddMember("frame_protocol",

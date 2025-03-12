@@ -34,7 +34,7 @@ struct Analyzer {
         std::unique_ptr<PacketDefineDecode> dec;
         std::shared_ptr<std::vector<char>> fixed = pkt->fixed.lock();
         analyzer.write(fixed->data(), fixed->size());
-        analyzer.write(pkt->data.data(), pkt->data.size());
+        if (pkt->data) analyzer.write(pkt->data->data(), pkt->data->size());
         analyzer.close_write();
         std::string xml = analyzer.read_until_eof();
         auto pos = xml.find("<packet>");

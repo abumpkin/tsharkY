@@ -67,6 +67,18 @@ function(load_3rd tar)
     endif()
 endfunction()
 
+# fmt
+set(FMT_INSTALL OFF CACHE BOOL "Generate the install target.")
+set(FMT_OS ON CACHE BOOL "Include OS-specific APIs.")
+add_subdirectory(3rd/fmt)
+load_3rd(fmt)
+
+# SQLiteCpp
+set(SQLITECPP_RUN_CPPCHECK OFF CACHE BOOL "Run cppcheck C++ static analysis tool.")
+set(SQLITECPP_RUN_CPPLINT OFF CACHE BOOL "Run cpplint.py tool for Google C++ StyleGuide.")
+add_subdirectory(3rd/SQLiteCpp)
+load_3rd(SQLiteCpp)
+
 # pugixml
 add_subdirectory(3rd/pugixml)
 load_3rd(pugixml-static)

@@ -11,4 +11,6 @@ target_link_libraries(tshark_server PRIVATE
     loguru
     oatpp
     pugixml-static
+    SQLiteCpp
+    fmt
 )
