@@ -28,7 +28,6 @@
 #include <shared_mutex>
 #include <stack>
 #include <string>
-#include <thread>
 #include <vector>
 
 template <size_t SIZE = 4096>
@@ -117,8 +116,8 @@ class StreamBuf {
                     continue;
                 }
                 if (!blocking) return written;
-                lock.unlock();
-                std::this_thread::yield();
+                // lock.unlock();
+                // std::this_thread::yield();
                 continue;
             }
 
@@ -153,8 +152,8 @@ class StreamBuf {
                     continue;
                 }
                 if (!blocking) return read;
-                lock.unlock();
-                std::this_thread::yield();
+                // lock.unlock();
+                // std::this_thread::yield();
                 continue;
             }
 
@@ -277,7 +276,7 @@ class StreamBuf {
         std::vector<BlockRecord> records;
         size_t total_length = 0;
         bool found = false;
-        Block *stop_block = nullptr;
+        // Block *stop_block = nullptr;
         // size_t stop_offset = 0;
 
         Block *current_block = head.load(std::memory_order_acquire);
@@ -304,7 +303,7 @@ class StreamBuf {
                 const size_t bytes = pos - begin + 1;
                 records.emplace_back(current_block, start, bytes);
                 total_length += bytes;
-                stop_block = current_block;
+                // stop_block = current_block;
                 // stop_offset = start + bytes;
                 found = true;
                 break;
@@ -320,53 +319,14 @@ class StreamBuf {
         }
 
         if (!found) return "";
-
-        // 第二阶段：验证并实际读取数据
-        std::string result;
-        result.resize(total_length);
-        char *dest = &result[0];
-        size_t copied = 0;
-        bool success = true;
-
-        for (const auto &rec : records) {
-            std::unique_lock<std::mutex> lock(rec.block->block_mutex);
-
-            // 验证读取位置是否变化
-            if (rec.block->read_pos != rec.start_pos) {
-                success = false;
-                break;
-            }
-
-            // 拷贝数据
-            memcpy(dest + copied, rec.block->data.data() + rec.start_pos,
-                rec.length);
-            copied += rec.length;
-
-            // 更新读取位置
-            rec.block->read_pos += rec.length;
-
-            // 回收已消费完的块
-            if (rec.block == stop_block) {
-                if (rec.block->read_pos == rec.block->write_pos) {
-                    Block *next =
-                        rec.block->next.load(std::memory_order_acquire);
-                    if (next) {
-                        head.store(next, std::memory_order_release);
-                        block_pool->release(rec.block);
-                        block_count_.fetch_sub(1, std::memory_order_relaxed);
-                    }
-                }
-            }
+        std::string ret;
+        if (total_length) {
+            ret.resize(total_length);
+            read(ret.data(), total_length);
         }
-
-        if (success) {
-            size_.fetch_sub(copied, std::memory_order_relaxed);
-            return result;
-        }
-        return "";
+        return ret;
     }
 
-    // 优化后的find方法 [[7]][[9]]
     size_t find(const std::string &target) {
         if (target.empty()) return 0;
 
@@ -380,7 +340,7 @@ class StreamBuf {
 
         while (current_block) {
             std::lock_guard<std::mutex> lock(
-                current_block->block_mutex); // 读锁优化 [[8]]
+                current_block->block_mutex); // 读锁优化
             size_t available =
                 current_block->write_pos - current_block->read_pos;
             if (available == 0) {
@@ -401,7 +361,7 @@ class StreamBuf {
                 return current_pos - window.size() + pos;
             }
 
-            // 更新滑动窗口为最后(target_len - 1)字节 [[9]]
+            // 更新滑动窗口为最后(target_len - 1)字节
             if (combined.size() >= target_len) {
                 window = combined.substr(combined.size() - (target_len - 1));
             }
@@ -426,7 +386,6 @@ class StreamBuf {
         return ret;
     }
 
-    // KMP算法预处理：生成部分匹配表 [[7]]
     static std::vector<size_t> buildKMPTABLE(const std::string &pattern) {
         std::vector<size_t> lps(pattern.size(), 0);
         size_t len = 0;
@@ -446,7 +405,6 @@ class StreamBuf {
         return lps;
     }
 
-    // KMP算法搜索 [[7]]
     static size_t kmpSearch(const std::string &text,
         const std::vector<size_t> &lps, const std::string &pattern) {
         size_t i = 0, j = 0;

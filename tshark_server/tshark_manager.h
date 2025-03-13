@@ -33,6 +33,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <future>
 #include <initializer_list>
 #include <loguru.hpp>
@@ -52,10 +53,16 @@ class TSharkManager;
 struct SharkCaptureThread;
 
 struct SharkLoader {
+    enum Event {
+        E_FIXED_UPDATE,
+        E_LOAD_COMPLETE
+    };
     using ParserStreams = std::vector<std::shared_ptr<ParserStream>>;
+    using LoaderEvent = std::function<void(Event)>;
 
     protected:
     volatile std::atomic_bool stop_ctl = false;
+    LoaderEvent notify;
 
     public:
     SharkLoader() = delete;
@@ -97,6 +104,12 @@ struct SharkLoader {
     virtual void interrupt_load() {
         if (!stop_ctl) stop_ctl = true;
     }
+
+    virtual std::string get_format() const = 0;
+
+    virtual void set_notify(LoaderEvent func) {
+        notify = func;
+    }
 };
 
 struct SharkPcapngLoader : SharkLoader {
@@ -131,6 +144,10 @@ struct SharkPcapngLoader : SharkLoader {
 
     SharkPcapngLoader(std::shared_ptr<UniStreamInterface> stream)
         : SharkLoader(stream) {}
+
+    virtual std::string get_format() const override {
+        return "pcapng";
+    }
 
     virtual bool load(ParserStreams const &ps) override {
         SharkLoader::load(ps);
@@ -179,6 +196,7 @@ struct SharkPcapngLoader : SharkLoader {
                 }
                 LOG_F(INFO, "pcapng found Pcapng Header Block!");
                 right_format = true;
+                if (notify) notify(E_FIXED_UPDATE);
                 continue;
             }
             if (!right_format) {
@@ -235,6 +253,7 @@ struct SharkPcapngLoader : SharkLoader {
                 break;
             }
         }
+        if (notify) notify(E_LOAD_COMPLETE);
         for (auto const &i : parsers) {
             i->wait_done();
         }
@@ -264,6 +283,10 @@ struct SharkPcapLoader : SharkLoader {
     SharkPcapLoader(std::shared_ptr<UniStreamInterface> stream)
         : SharkLoader(stream) {}
 
+    virtual std::string get_format() const override {
+        return "pcap";
+    }
+
     virtual bool load(ParserStreams const &ps) override {
         SharkLoader::load(ps);
         auto bin_stream = parser_stream;
@@ -280,6 +303,7 @@ struct SharkPcapLoader : SharkLoader {
             close_streams();
             return false;
         }
+        if (notify) notify(E_FIXED_UPDATE);
         uint32_t rd_len, t;
         std::vector<char> buf;
         bool ret = false;
@@ -329,6 +353,7 @@ struct SharkPcapLoader : SharkLoader {
                 break;
             }
         }
+        if (notify) notify(E_LOAD_COMPLETE);
         for (auto const &i : parsers) {
             i->wait_done();
         }
@@ -350,9 +375,14 @@ struct SharkCaptureThread {
     std::promise<bool> stop_status;
     volatile std::atomic_bool is_capturing = false;
     volatile std::atomic_bool is_done_with_succeed = false;
+    SharkLoader::LoaderEvent load_event;
 
     public:
     SharkCaptureThread() = default;
+
+    void set_load_event(SharkLoader::LoaderEvent func) {
+        load_event = func;
+    }
 
     bool load_capture_file(
         std::filesystem::path path, SharkLoader::ParserStreams ps) {
@@ -376,6 +406,7 @@ struct SharkCaptureThread {
         else if (ext == ".pcapng") {
             loader = std::make_shared<SharkPcapngLoader>(stream);
         }
+        loader->set_notify(load_event);
         loader->load(ps);
         return true;
     }
@@ -429,6 +460,7 @@ struct SharkCaptureThread {
         if (!loader) {
             loader = std::make_shared<SharkPcapngLoader>(stream);
         }
+        loader->set_notify(load_event);
         loader->load(ps);
         return true;
     }
@@ -529,28 +561,42 @@ class TSharkManager {
     InterfacesActivityThread statistics_thread;
 
     std::shared_ptr<ParserStreamPacket> ps;
-    std::vector<std::shared_ptr<Packet>> packets_list;
+    // std::vector<std::shared_ptr<Packet>> packets_list;
     std::shared_ptr<TsharkDB> db;
     std::unique_ptr<DBBriefTable> db_brief;
+    std::unique_ptr<DBFixed> db_fixed;
+
+    SharkLoader::LoaderEvent create_loader_event() {
+        return [&](SharkLoader::Event e) {
+            if (e == SharkLoader::E_FIXED_UPDATE) {
+                db_fixed->save(capture_thread.loader->fixed_data,
+                    capture_thread.loader->get_format());
+            }
+        };
+    }
 
     // 重新创建解析流
     void recreate_ps() {
+        db_brief->clear();
         // 包解析结果处理函数
         auto handler = [&](std::shared_ptr<Packet> p,
                            ParserStreamPacket::Status st) {
             // 暂时无新数据包到达，提交事务
             if (st == ParserStreamPacket::Status::PKT_NONE) {
-                db_brief->commit_transaction();
+                db->commit_transaction();
             }
             // 新数据包到达，进行存储
             if (st == ParserStreamPacket::Status::PKT_ARRIVE) {
                 // 开始事务
-                if (!db_brief->has_transaction()) db_brief->start_transaction();
+                if (!db->has_transaction()) db->start_transaction();
                 // 插入数据到数据库
                 db_brief->insert(p);
                 // 清除包数据
-                p->data.reset();
-                packets_list.push_back(p);
+                // LOG_F(INFO, "usecount: %zu %zu", p.use_count(),
+                // p->fixed.use_count());
+
+                // p->data.reset();
+                // packets_list.push_back(p);
             }
         };
         ps = std::make_shared<ParserStreamPacket>(handler);
@@ -560,6 +606,7 @@ class TSharkManager {
     TSharkManager() {
         db = TsharkDB::connect("dump_data/temp.db3");
         db_brief = std::make_unique<DBBriefTable>(db);
+        db_fixed = std::make_unique<DBFixed>(db);
     }
 
     std::future<bool> capture_start(
@@ -569,6 +616,7 @@ class TSharkManager {
                 return false;
             });
         recreate_ps();
+        capture_thread.set_load_event(create_loader_event());
         return capture_thread.start_capture({ps}, if_name, save_to);
     }
 
@@ -578,6 +626,7 @@ class TSharkManager {
 
     std::future<bool> capture_from_file(std::filesystem::path path) {
         recreate_ps();
+        capture_thread.set_load_event(create_loader_event());
         return std::async(std::launch::async, [=]() {
             return capture_thread.load_capture_file(path, {ps});
         });
@@ -588,30 +637,23 @@ class TSharkManager {
     }
 
     std::string capture_get_brief(uint32_t pos = 0, uint32_t len = 0) {
-        std::string ret;
-        if (!ps) return ret;
-        uint32_t total = packets_list.size();
-        if (pos > total) return ret;
-        if (pos + len > total || len == 0) len = total - pos;
         rapidjson::Document obj;
         rapidjson::MemoryPoolAllocator<> allocator;
         obj.SetArray();
-        for (auto i = packets_list.cbegin() + pos;
-            i != packets_list.cbegin() + pos + len; i++) {
-            obj.PushBack(i->get()->to_json_obj(allocator), allocator);
+        std::vector<std::shared_ptr<Packet>> list =
+            db_brief->select(pos, len, *db_fixed);
+        for (auto &i : list) {
+            obj.PushBack(i->to_json_obj(allocator), allocator);
         }
         return utils_to_json(obj, true);
     }
 
     std::string capture_get_detail(uint32_t pos) {
-        std::string ret;
-        // if (!ps_detail) return ret;
-        // if (pos >= ps_detail->packets_list.size()) return ret;
-        // return ps_detail->packets_list[pos]->to_json();
-        if (!ps) return ret;
-        if (pos >= packets_list.size()) return ret;
+        std::vector<std::shared_ptr<Packet>> list =
+            db_brief->select(pos, 1, *db_fixed);
+        if (list.empty()) return "";
         std::unique_ptr<PacketDefineDecode> dec =
-            Analyzer::packet_detail(packets_list[pos]);
+            Analyzer::packet_detail(list[0]);
         return dec->to_json();
     }
 

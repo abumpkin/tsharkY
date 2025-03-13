@@ -24,7 +24,6 @@
 #include "tshark_info.h"
 #include "unistream.h"
 #include <memory>
-#include <vector>
 
 struct Analyzer {
     static std::unique_ptr<PacketDefineDecode> packet_detail(
@@ -32,8 +31,7 @@ struct Analyzer {
         std::string cmd = TSHARK_PATH " -Q -l -r - -T pdml";
         UniStreamDualPipeU analyzer{cmd};
         std::unique_ptr<PacketDefineDecode> dec;
-        std::shared_ptr<std::vector<char>> fixed = pkt->fixed.lock();
-        analyzer.write(fixed->data(), fixed->size());
+        analyzer.write(pkt->fixed->data(), pkt->fixed->size());
         if (pkt->data) analyzer.write(pkt->data->data(), pkt->data->size());
         analyzer.close_write();
         std::string xml = analyzer.read_until_eof();

@@ -434,8 +434,8 @@ struct Packet {
     std::string dst_ip;
     uint16_t src_port;
     uint16_t dst_port;
-    std::shared_ptr<std::vector<char>> data;
-    std::weak_ptr<std::vector<char>> fixed;
+    std::unique_ptr<std::vector<char>> data;
+    std::shared_ptr<std::vector<char>> fixed;
 
     rapidjson::Value to_json_obj(rapidjson::MemoryPoolAllocator<> &allocator) {
         rapidjson::Value pkt_obj;

@@ -66,7 +66,8 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
     constexpr static const uint32_t CMD_FIELD_NUM =
         sizeof(CMD_Fields) / sizeof(char const *);
     using PacketHandler = std::function<void(std::shared_ptr<Packet>, Status)>;
-    std::shared_ptr<std::vector<char>> fixed;
+    const uint32_t MAX_QUEUE = 65535;
+    std::weak_ptr<std::vector<char>> fixed;
     // std::vector<std::shared_ptr<Packet>> packets_list;
     std::queue<std::shared_ptr<Packet>> packets_pending;
     volatile std::atomic_bool stop_ctl;
@@ -96,14 +97,21 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
         std::vector<char> const &block, uint32_t cap_off,
         uint32_t cap_len) override {
         std::shared_ptr<Packet> packet = std::make_shared<Packet>();
-        if (!this->fixed)
-            this->fixed = std::make_shared<std::vector<char>>(fixed);
+        auto p_fixed = this->fixed.lock();
+        if (!p_fixed) {
+            p_fixed = std::make_shared<std::vector<char>>(fixed);
+            this->fixed = p_fixed;
+        }
         // 包数据 data
         packet->cap_len = cap_len;
         packet->cap_off = cap_off;
-        packet->data = std::make_shared<std::vector<char>>(block);
-        packet->fixed = this->fixed;
+        packet->data = std::make_unique<std::vector<char>>(block);
+        packet->fixed = p_fixed;
         // 加入待解析队列
+        using namespace std::chrono_literals;
+        while (packets_pending.size() > MAX_QUEUE) {
+            std::this_thread::sleep_for(1ms);
+        }
         {
             std::lock_guard<std::mutex> lock(t_m);
             packets_pending.push(packet);
