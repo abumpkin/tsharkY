@@ -561,7 +561,6 @@ class TSharkManager {
     InterfacesActivityThread statistics_thread;
 
     std::shared_ptr<ParserStreamPacket> ps;
-    // std::vector<std::shared_ptr<Packet>> packets_list;
     std::shared_ptr<TsharkDB> db;
     std::unique_ptr<DBBriefTable> db_brief;
     std::unique_ptr<DBFixed> db_fixed;
@@ -577,7 +576,7 @@ class TSharkManager {
 
     // 重新创建解析流
     void recreate_ps() {
-        db_brief->clear();
+        db->recreate();
         // 包解析结果处理函数
         auto handler = [&](std::shared_ptr<Packet> p,
                            ParserStreamPacket::Status st) {
@@ -591,12 +590,7 @@ class TSharkManager {
                 if (!db->has_transaction()) db->start_transaction();
                 // 插入数据到数据库
                 db_brief->insert(p);
-                // 清除包数据
                 // LOG_F(INFO, "usecount: %zu %zu", p.use_count(),
-                // p->fixed.use_count());
-
-                // p->data.reset();
-                // packets_list.push_back(p);
             }
         };
         ps = std::make_shared<ParserStreamPacket>(handler);
@@ -645,15 +639,13 @@ class TSharkManager {
         for (auto &i : list) {
             obj.PushBack(i->to_json_obj(allocator), allocator);
         }
-        return utils_to_json(obj, true);
+        return utils_to_json(obj);
     }
 
-    std::string capture_get_detail(uint32_t pos) {
-        std::vector<std::shared_ptr<Packet>> list =
-            db_brief->select(pos, 1, *db_fixed);
-        if (list.empty()) return "";
-        std::unique_ptr<PacketDefineDecode> dec =
-            Analyzer::packet_detail(list[0]);
+    std::string capture_get_detail(uint32_t idx) {
+        std::shared_ptr<Packet> p = db_brief->select(idx, *db_fixed);
+        if (!p) return "";
+        std::unique_ptr<PacketDefineDecode> dec = Analyzer::packet_detail(p);
         return dec->to_json();
     }
 

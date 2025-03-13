@@ -1,20 +1,13 @@
 #include "database.h"
-#include "fmt/format.h"
 #include "mutils.h"
-#include "tshark_info.h"
-#include "tshark_manager.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <cstdint>
 #include <cstring>
-#include <fstream>
 #include <iostream>
-#include <memory>
 #include <ostream>
 #include <string>
 #include <traffic_statistics.h>
 #include <unistream.h>
-#include <unordered_map>
-#include <utility>
 
 void test() {
     std::filesystem::path path = "dump_data/big.pcap";

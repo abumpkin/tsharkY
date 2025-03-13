@@ -68,7 +68,6 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
     using PacketHandler = std::function<void(std::shared_ptr<Packet>, Status)>;
     const uint32_t MAX_QUEUE = 65535;
     std::weak_ptr<std::vector<char>> fixed;
-    // std::vector<std::shared_ptr<Packet>> packets_list;
     std::queue<std::shared_ptr<Packet>> packets_pending;
     volatile std::atomic_bool stop_ctl;
     std::unique_ptr<std::thread> p_t;
@@ -172,7 +171,6 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
                 packet = p->packets_pending.front();
                 p->packets_pending.pop();
             }
-            // std::string explain = p->read_until('\n');
 
             do {
                 read_some();

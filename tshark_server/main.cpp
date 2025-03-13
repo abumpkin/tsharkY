@@ -28,6 +28,7 @@
 #include <oatpp/web/server/interceptor/ResponseInterceptor.hpp>
 #include <string>
 
+const uint32_t THREAD_COUNT = 1;
 TSharkManager m;
 
 #include OATPP_CODEGEN_BEGIN(DTO)
@@ -198,7 +199,8 @@ struct Controller : public oatpp::web::server::api::ApiController {
         ENDPOINT_ASYNC_INIT(capture_load_file);
         std::future<bool> res;
         Action act() override {
-            std::string path = utils_url_decode(request->getQueryParameter("path"));
+            std::string path =
+                utils_url_decode(request->getQueryParameter("path"));
             auto ret = DTO_Status::createShared();
             if (!res.valid()) res = m.capture_from_file(path);
             if (res.valid()) {
@@ -270,7 +272,7 @@ struct Controller : public oatpp::web::server::api::ApiController {
         Action act() override {
             uint32_t pos;
             try {
-                pos = std::stoul(request->getQueryParameter("pos", ""));
+                pos = std::stoul(request->getQueryParameter("idx", ""));
             }
             catch (...) {
                 return _return(controller->createResponse(Status::CODE_400));
@@ -286,13 +288,25 @@ struct Controller : public oatpp::web::server::api::ApiController {
 
 #include OATPP_CODEGEN_END(ApiController) /////
 
+struct RequestInformation
+    : oatpp::web::server::interceptor::RequestInterceptor {
+    virtual std::shared_ptr<OutgoingResponse> intercept(
+        const std::shared_ptr<IncomingRequest> &request) {
+        if (request)
+            LOG_F(INFO, "IN: %s - %s",
+                request->getStartingLine().method.std_str().c_str(),
+                request->getStartingLine().path.std_str().c_str());
+        return nullptr;
+    }
+};
+
 struct ResponseInformation
     : oatpp::web::server::interceptor::ResponseInterceptor {
     virtual std::shared_ptr<OutgoingResponse> intercept(
         const std::shared_ptr<IncomingRequest> &request,
         const std::shared_ptr<OutgoingResponse> &response) {
         if (request && response)
-            LOG_F(INFO, "%s - %s\t\t%d (%s)",
+            LOG_F(INFO, "OUT: %s - %s\t\t%d (%s)",
                 request->getStartingLine().method.std_str().c_str(),
                 request->getStartingLine().path.std_str().c_str(),
                 response->getStatus().code, response->getStatus().description);
@@ -318,9 +332,10 @@ class AppComponent {
             std::shared_ptr<oatpp::web::server::HttpRouter>, router);
         auto handler =
             oatpp::web::server::AsyncHttpConnectionHandler::createShared(
-                router);
+                router, THREAD_COUNT);
         handler->addResponseInterceptor(
             std::make_shared<ResponseInformation>());
+        handler->addRequestInterceptor(std::make_shared<RequestInformation>());
         return handler;
     }());
     OATPP_CREATE_COMPONENT(std::shared_ptr<oatpp::data::mapping::ObjectMapper>,

@@ -30,17 +30,35 @@
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <cstdint>
 #include <exception>
+#include <filesystem>
 #include <fmt/core.h>
 #include <loguru.hpp>
 #include <memory>
+#include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <vector>
 
 struct TsharkDB {
+    struct ProtectedDB : std::shared_lock<std::shared_mutex> {
+        TsharkDB *p;
+        ProtectedDB(TsharkDB *p, std::shared_mutex &mt)
+            : std::shared_lock<std::shared_mutex>(mt) {
+            this->p = p;
+        }
+        SQLite::Database *operator->() {
+            return p->db.get();
+        }
+        SQLite::Database &operator*() {
+            return *p->db;
+        }
+    };
+
+    private:
+    std::shared_mutex mt;
     std::unique_ptr<SQLite::Database> db;
     std::unique_ptr<SQLite::Transaction> transaction;
 
-    private:
     TsharkDB(std::string const &path) {
         if (!utils_test_valid_filename(path).empty()) {
             try {
@@ -54,7 +72,11 @@ struct TsharkDB {
     }
 
     public:
-    TsharkDB(TsharkDB &&) = default;
+    TsharkDB(TsharkDB &&other) {
+        this->db = std::move(other.db);
+        this->transaction = std::move(other.transaction);
+    }
+
     static std::shared_ptr<TsharkDB> connect(std::string const &path) {
         return std::make_shared<TsharkDB>(TsharkDB(path));
     }
@@ -89,6 +111,23 @@ struct TsharkDB {
         return false;
     }
 
+    void recreate() {
+        std::unique_lock<std::shared_mutex> lock(mt);
+        if (has_transaction()) commit_transaction();
+        std::filesystem::path path = db->getFilename();
+        db.reset();
+        if (std::filesystem::exists(path) &&
+            std::filesystem::is_regular_file(path)) {
+            std::filesystem::remove(path);
+        }
+        db = std::make_unique<SQLite::Database>(
+            path, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+    }
+
+    ProtectedDB get_db() {
+        return ProtectedDB(this, mt);
+    }
+
     ~TsharkDB() {
         if (has_transaction()) commit_transaction();
     }
@@ -106,8 +145,9 @@ struct DBFixed {
     std::unique_ptr<SQLite::Statement> stat_select;
 
     int exec(std::string const &sql) {
+        TsharkDB::ProtectedDB db = con->get_db();
         try {
-            return con->db->exec(sql);
+            return db->exec(sql);
         }
         catch (std::exception &e) {
             LOG_F(ERROR, "ERROR: %s", e.what());
@@ -118,6 +158,7 @@ struct DBFixed {
     public:
     DBFixed(std::shared_ptr<TsharkDB> const &con) : con{con} {
         check_table();
+        TsharkDB::ProtectedDB db = con->get_db();
         std::string sql = R"(
             INSERT OR REPLACE INTO {} VALUES (
                 @format,
@@ -125,20 +166,21 @@ struct DBFixed {
             )
         )";
         sql = fmt::format(sql, name);
-        stat_insert = std::make_unique<SQLite::Statement>(*con->db, sql);
+        stat_insert = std::make_unique<SQLite::Statement>(*db, sql);
         sql = R"(
             DELETE FROM {}
         )";
         sql = fmt::format(sql, name);
-        stat_delete = std::make_unique<SQLite::Statement>(*con->db, sql);
+        stat_delete = std::make_unique<SQLite::Statement>(*db, sql);
         sql = R"(
             SELECT data, format FROM {} LIMIT 1
         )";
         sql = fmt::format(sql, name);
-        stat_select = std::make_unique<SQLite::Statement>(*con->db, sql);
+        stat_select = std::make_unique<SQLite::Statement>(*db, sql);
     }
 
     int clear() {
+        TsharkDB::ProtectedDB db = con->get_db();
         if (!stat_delete) return 0;
         try {
             stat_delete->reset();
@@ -151,6 +193,7 @@ struct DBFixed {
     }
 
     int check_table() {
+        TsharkDB::ProtectedDB db = con->get_db();
         std::string sql = R"(
             CREATE TABLE IF NOT EXISTS {} (
                 format TEXT PRIMARY KEY NOT NULL ON CONFLICT REPLACE,
@@ -164,6 +207,7 @@ struct DBFixed {
     int save(std::vector<char> const &data, std::string format) {
         if (!stat_insert) return 0;
         clear();
+        TsharkDB::ProtectedDB db = con->get_db();
         fixed.reset();
         try {
             stat_insert->reset();
@@ -180,6 +224,7 @@ struct DBFixed {
     std::shared_ptr<std::vector<char>> get_data() {
         if (fixed) return fixed;
         if (!stat_select) return fixed;
+        TsharkDB::ProtectedDB db = con->get_db();
         fixed = std::make_shared<std::vector<char>>();
         if (con->has_transaction()) con->commit_transaction();
         try {
@@ -228,12 +273,14 @@ struct DBBriefTable {
     private:
     std::unique_ptr<SQLite::Statement> stat_insert;
     std::unique_ptr<SQLite::Statement> stat_delete;
+    std::unique_ptr<SQLite::Statement> stat_select_one;
     std::unique_ptr<SQLite::Statement> stat_select;
     std::unique_ptr<SQLite::Statement> stat_size;
 
     int exec(std::string const &sql) {
+        TsharkDB::ProtectedDB db = con->get_db();
         try {
-            return con->db->exec(sql);
+            return db->exec(sql);
         }
         catch (std::exception &e) {
             LOG_F(ERROR, "ERROR: %s", e.what());
@@ -241,9 +288,36 @@ struct DBBriefTable {
         return 0;
     }
 
+    inline std::shared_ptr<Packet> compose_packet(
+        SQLite::Statement &stat, DBFixed &dbfixed) {
+        std::shared_ptr<Packet> p = std::make_shared<Packet>();
+        p->idx = stat.getColumn("idx").getUInt();
+        p->frame_timestamp = stat.getColumn("frame_timestamp").getString();
+        p->frame_protocol = stat.getColumn("frame_protocol").getString();
+        p->frame_info = stat.getColumn("frame_info").getString();
+        p->src_location = stat.getColumn("src_location").getString();
+        p->dst_location = stat.getColumn("dst_location").getString();
+        p->src_mac = stat.getColumn("src_mac").getString();
+        p->dst_mac = stat.getColumn("dst_mac").getString();
+        p->src_ip = stat.getColumn("src_ip").getString();
+        p->dst_ip = stat.getColumn("dst_ip").getString();
+        p->src_port = stat.getColumn("src_port").getUInt();
+        p->dst_port = stat.getColumn("dst_port").getUInt();
+        p->cap_off = stat.getColumn("cap_off").getUInt();
+        p->cap_len = stat.getColumn("cap_len").getUInt();
+        auto data_col = stat.getColumn("data");
+        p->data = std::make_unique<std::vector<char>>(
+            static_cast<const char *>(data_col.getBlob()),
+            static_cast<const char *>(data_col.getBlob()) +
+                data_col.getBytes());
+        p->fixed = dbfixed.get_data();
+        return p;
+    }
+
     public:
     DBBriefTable(std::shared_ptr<TsharkDB> const &con) : con{con} {
         check_table();
+        TsharkDB::ProtectedDB db = con->get_db();
         std::string sql = R"(
             INSERT OR REPLACE INTO {} VALUES (
                 @idx,
@@ -264,7 +338,7 @@ struct DBBriefTable {
             )
         )";
         sql = fmt::format(sql, name);
-        stat_insert = std::make_unique<SQLite::Statement>(*con->db, sql);
+        stat_insert = std::make_unique<SQLite::Statement>(*db, sql);
         Field.idx = stat_insert->getIndex("@idx");
         Field.frame_timestamp = stat_insert->getIndex("@frame_timestamp");
         Field.frame_protocol = stat_insert->getIndex("@frame_protocol");
@@ -284,23 +358,29 @@ struct DBBriefTable {
             DELETE FROM {} WHERE idx = ?
         )";
         sql = fmt::format(sql, name);
-        stat_delete = std::make_unique<SQLite::Statement>(*con->db, sql);
+        stat_delete = std::make_unique<SQLite::Statement>(*db, sql);
         sql = R"(
-            SELECT * FROM {} WHERE idx >= @idx ORDER BY idx ASC LIMIT @size
+            SELECT * FROM {} LIMIT @size OFFSET @pos
         )";
         sql = fmt::format(sql, name);
-        stat_select = std::make_unique<SQLite::Statement>(*con->db, sql);
+        stat_select = std::make_unique<SQLite::Statement>(*db, sql);
+        sql = R"(
+            SELECT * FROM {} WHERE idx = @idx
+        )";
+        sql = fmt::format(sql, name);
+        stat_select_one = std::make_unique<SQLite::Statement>(*db, sql);
         sql = R"(
             SELECT count(*) from {}
         )";
         sql = fmt::format(sql, name);
-        stat_size = std::make_unique<SQLite::Statement>(*con->db, sql);
+        stat_size = std::make_unique<SQLite::Statement>(*db, sql);
     }
 
     uint32_t size() {
         if (!stat_size) return 0;
+        TsharkDB::ProtectedDB db = con->get_db();
         stat_size->reset();
-        try{
+        try {
             if (stat_size->executeStep()) {
                 return stat_size->getColumn(0).getUInt();
             }
@@ -312,15 +392,16 @@ struct DBBriefTable {
     }
 
     int clear() {
+        TsharkDB::ProtectedDB db = con->get_db();
         std::string sql = R"(
-            DROP TABLE IF EXISTS {}
+            DELETE FROM {}
         )";
         sql = fmt::format(sql, name);
-        exec(sql);
-        return check_table();
+        return exec(sql);
     }
 
     int check_table() {
+        TsharkDB::ProtectedDB db = con->get_db();
         std::string sql = R"(
             CREATE TABLE IF NOT EXISTS {} (
                 idx INTEGER PRIMARY KEY ON CONFLICT REPLACE,
@@ -346,6 +427,7 @@ struct DBBriefTable {
 
     int insert(std::shared_ptr<Packet> p) {
         if (!stat_insert) return 0;
+        TsharkDB::ProtectedDB db = con->get_db();
         try {
             stat_insert->reset();
             stat_insert->bind(Field.idx, p->idx);
@@ -376,6 +458,7 @@ struct DBBriefTable {
 
     int delete_one(uint32_t idx) {
         if (!stat_delete) return 0;
+        TsharkDB::ProtectedDB db = con->get_db();
         try {
             stat_delete->reset();
             stat_delete->bind(1, idx);
@@ -387,43 +470,36 @@ struct DBBriefTable {
         return 0;
     }
 
+    std::shared_ptr<Packet> select(uint32_t idx, DBFixed &dbfixed) {
+        if (!stat_select_one) return nullptr;
+        TsharkDB::ProtectedDB db = con->get_db();
+        if (con->has_transaction()) con->commit_transaction();
+        try {
+            stat_select_one->reset();
+            stat_select_one->bind("@idx", idx);
+            if (stat_select_one->executeStep()) {
+                auto ret = compose_packet(*stat_select_one, dbfixed);
+                return ret;
+            }
+        }
+        catch (std::exception &e) {
+            LOG_F(ERROR, "ERROR: %s", e.what());
+        }
+        return nullptr;
+    }
+
     std::vector<std::shared_ptr<Packet>> select(
-        uint32_t idx, uint32_t size, DBFixed &dbfixed) {
+        uint32_t pos, uint32_t size, DBFixed &dbfixed) {
         std::vector<std::shared_ptr<Packet>> ret;
         if (!stat_select) return ret;
+        TsharkDB::ProtectedDB db = con->get_db();
         if (con->has_transaction()) con->commit_transaction();
         try {
             stat_select->reset();
-            stat_select->bind("@idx", idx);
+            stat_select->bind("@pos", pos);
             stat_select->bind("@size", size);
             while (stat_select->executeStep()) {
-                std::shared_ptr<Packet> p = std::make_shared<Packet>();
-                p->idx = stat_select->getColumn("idx").getUInt();
-                p->frame_timestamp =
-                    stat_select->getColumn("frame_timestamp").getString();
-                p->frame_protocol =
-                    stat_select->getColumn("frame_protocol").getString();
-                p->frame_info =
-                    stat_select->getColumn("frame_info").getString();
-                p->src_location =
-                    stat_select->getColumn("src_location").getString();
-                p->dst_location =
-                    stat_select->getColumn("dst_location").getString();
-                p->src_mac = stat_select->getColumn("src_mac").getString();
-                p->dst_mac = stat_select->getColumn("dst_mac").getString();
-                p->src_ip = stat_select->getColumn("src_ip").getString();
-                p->dst_ip = stat_select->getColumn("dst_ip").getString();
-                p->src_port = stat_select->getColumn("src_port").getUInt();
-                p->dst_port = stat_select->getColumn("dst_port").getUInt();
-                p->cap_off = stat_select->getColumn("cap_off").getUInt();
-                p->cap_len = stat_select->getColumn("cap_len").getUInt();
-                auto data_col = stat_select->getColumn("data");
-                p->data = std::make_unique<std::vector<char>>(
-                    static_cast<const char *>(data_col.getBlob()),
-                    static_cast<const char *>(data_col.getBlob()) +
-                        data_col.getBytes());
-                p->fixed = dbfixed.get_data();
-                ret.push_back(p);
+                ret.push_back(compose_packet(*stat_select, dbfixed));
             }
         }
         catch (std::exception &e) {
