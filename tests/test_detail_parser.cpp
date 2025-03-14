@@ -15,7 +15,8 @@
 
 int main() {
     auto p = [](std::shared_ptr<PacketDefineDecode> p) {
-        std::cout << p->to_json() << std::endl;
+        // std::cout << p->to_json() << std::endl;
+        p->to_json();
     };
     std::string path = "dump_data/capture.pcap";
     {

@@ -85,7 +85,7 @@ inline std::vector<std::string> const utils_split_str(
         pos2 = str.find(sep, pos1);
         ret.push_back(str.substr(pos1, pos2 - pos1));
         if (pos2 == std::string::npos) break;
-        pos1 = pos2 + 1;
+        pos1 = pos2 + sep.size();
     }
     return ret;
 }
@@ -107,8 +107,12 @@ inline std::string const utils_join_str(
 inline std::string const utils_replace_str_all(
     std::string const &str, std::string const &pat, std::string const &rep) {
     std::vector<std::string> parts = utils_split_str(str, pat);
-    std::string ret = utils_join_str(parts, rep);
-    return ret;
+    std::string ret;
+    for (auto &i : parts) {
+        ret.append(rep);
+        ret.append(i);
+    }
+    return ret.substr(rep.size());
 }
 
 inline std::string &utils_str_lowcase(std::string &t) {
@@ -487,3 +491,16 @@ class utils_timer {
     uint32_t c = 0;
     uint32_t t = 0;
 };
+
+inline std::string utils_sql_fuzz_escape(const std::string &input) {
+    std::string result;
+    // 遍历输入字符串的每个字符
+    for (char c : input) {
+        // 对 %、_、\ 进行转义
+        if (c == '%' || c == '_' || c == '\\') {
+            result.push_back('\\'); // 添加转义字符
+        }
+        result.push_back(c); // 添加原字符
+    }
+    return result;
+}

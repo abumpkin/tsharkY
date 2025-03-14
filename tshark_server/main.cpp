@@ -1,4 +1,8 @@
 #include "mutils.h"
+#include "oatpp/core/async/Coroutine.hpp"
+#include "oatpp/parser/json/mapping/Serializer.hpp"
+#include "rapidjson/allocators.h"
+#include "rapidjson/document.h"
 #include "tshark_info.h"
 #include "tshark_manager.h"
 #include <chrono>
@@ -27,14 +31,65 @@
 #include <oatpp/web/server/interceptor/RequestInterceptor.hpp>
 #include <oatpp/web/server/interceptor/ResponseInterceptor.hpp>
 #include <string>
+#include <sys/types.h>
+#include <unordered_map>
 
 const uint32_t THREAD_COUNT = 1;
 TSharkManager m;
 
+namespace oatpp {
+    namespace __class {
+
+        struct RawString : std::string {
+            public:
+            static const ClassId CLASS_ID;
+
+            static Type *getType() {
+                static Type type(CLASS_ID);
+                return &type;
+            }
+
+            static void SerializerMethod(
+                oatpp::parser::json::mapping::Serializer *,
+                data::stream::ConsistentOutputStream *stream,
+                const oatpp::Void &polymorph) {
+                if (polymorph) {
+                    std::string *t = static_cast<RawString *>(polymorph.get());
+                    if (!t->empty())
+                        stream->writeSimple(t->data(), t->size());
+                    else
+                        stream->writeSimple("null", 4);
+                }
+                else {
+                    stream->writeSimple("null", 4);
+                }
+            }
+        };
+    }
+    const ClassId __class::RawString::CLASS_ID("RAWSTR");
+
+}
+struct RawStringWrapper
+    : oatpp::ObjectWrapper<std::string, oatpp::__class::RawString> {
+    RawStringWrapper() {}
+    operator std::string() const {
+        if (this->m_ptr == nullptr) {
+            throw std::runtime_error("[oatpp::data::mapping::type::String::"
+                                     "operator std::string() const]: "
+                                     "Error. Null pointer.");
+        }
+        return this->m_ptr.operator*();
+    }
+    inline RawStringWrapper &operator=(std::shared_ptr<std::string> str) {
+        m_ptr = str;
+        return *this;
+    }
+};
+
 #include OATPP_CODEGEN_BEGIN(DTO)
 
-class DTO_Status : public oatpp::DTO {
-    DTO_INIT(DTO_Status, DTO);
+class DTO_Base : public oatpp::DTO {
+    DTO_INIT(DTO_Base, DTO);
     enum Code {
         SUCCESS = 200,
         RUNNING = 201,
@@ -44,17 +99,11 @@ class DTO_Status : public oatpp::DTO {
     DTO_FIELD(String, msg, "msg");
 };
 
-class DTO_IfaceInfo : public oatpp::DTO {
-    DTO_INIT(DTO_IfaceInfo, DTO);
-    DTO_FIELD(oatpp::String, name, "name");
-    DTO_FIELD(oatpp::String, friendly_name, "friendly_name");
-    DTO_FIELD(oatpp::Vector<oatpp::String>, addrs, "addrs");
-    DTO_FIELD(oatpp::String, type, "type");
-};
-
-class DTO_IfaceInfos : public oatpp::DTO {
-    DTO_INIT(DTO_IfaceInfos, DTO);
-    DTO_FIELD(Vector<Object<DTO_IfaceInfo>>, iface);
+class DTO_Data : public DTO_Base {
+    DTO_INIT(DTO_Data, DTO_Base);
+    DTO_FIELD(UInt32, total, "total") = 0u;
+    DTO_FIELD(UInt32, size, "size") = 0u;
+    DTO_FIELD(RawStringWrapper, data, "data");
 };
 
 #include OATPP_CODEGEN_END(DTO)
@@ -76,17 +125,19 @@ struct Controller : public oatpp::web::server::api::ApiController {
                     return repeat();
                 }
             }
-            auto ret = DTO_IfaceInfos::createShared();
-            ret->iface = {};
-            for (auto const &i : infos.get()) {
-                auto t = DTO_IfaceInfo::createShared();
-                t->name = i.name;
-                t->friendly_name = i.friendly_name;
-                t->type = InterfaceTypeToString(i.type);
-                t->addrs = {};
-                t->addrs->assign(i.addrs.begin(), i.addrs.end());
-                ret->iface->push_back(t);
+            auto ifaces = infos.get();
+            auto ret = DTO_Data::createShared();
+            ret->code = ret->SUCCESS;
+            ret->msg = "获取成功";
+            ret->total = ifaces.size();
+            ret->size = ifaces.size();
+            rapidjson::Value list;
+            rapidjson::MemoryPoolAllocator<> alloc;
+            list.SetArray();
+            for (auto const &i : ifaces) {
+                list.PushBack(i.to_json_obj(alloc), alloc);
             }
+            ret->data = std::make_shared<std::string>(utils_to_json(list));
             return _return(
                 controller->createDtoResponse(Status::CODE_200, ret));
         }
@@ -105,19 +156,19 @@ struct Controller : public oatpp::web::server::api::ApiController {
                     return repeat();
                 }
             }
-            auto ret = DTO_Status::createShared();
+            auto ret = DTO_Base::createShared();
             if (res.valid()) {
                 if (res.get()) {
-                    ret->code = DTO_Status::SUCCESS;
+                    ret->code = DTO_Base::SUCCESS;
                     ret->msg = "启动成功!";
                 }
                 else {
-                    ret->code = DTO_Status::FAILURE;
+                    ret->code = DTO_Base::FAILURE;
                     ret->msg = "启动失败!";
                 }
             }
             else if (m.interfaces_activity_monitor_is_running()) {
-                ret->code = DTO_Status::RUNNING;
+                ret->code = DTO_Base::RUNNING;
                 ret->msg = "网络活动监视中!";
             }
             return _return(
@@ -129,7 +180,7 @@ struct Controller : public oatpp::web::server::api::ApiController {
         ENDPOINT_ASYNC_INIT(interfaces_monitor_stop);
         std::future<bool> res;
         Action act() override {
-            auto ret = DTO_Status::createShared();
+            auto ret = DTO_Base::createShared();
             if (!res.valid()) res = m.interfaces_activity_monitor_stop();
             if (res.valid()) {
                 std::future_status stat = res.wait_for(std::chrono::seconds(0));
@@ -138,11 +189,11 @@ struct Controller : public oatpp::web::server::api::ApiController {
                 }
             }
             if (res.get()) {
-                ret->code = DTO_Status::SUCCESS;
+                ret->code = DTO_Base::SUCCESS;
                 ret->msg = "停止成功!";
             }
             else {
-                ret->code = DTO_Status::FAILURE;
+                ret->code = DTO_Base::FAILURE;
                 ret->msg = "停止失败!";
             }
             return _return(
@@ -153,10 +204,21 @@ struct Controller : public oatpp::web::server::api::ApiController {
     ENDPOINT_ASYNC("GET", "/interfaces/monitor/read", interfaces_monitor_read) {
         ENDPOINT_ASYNC_INIT(interfaces_monitor_read);
         Action act() override {
-            auto obj = oatpp::UnorderedFields<oatpp::UInt32>::createShared();
-            for (auto &i : m.interfaces_activity_monitor_read()) {
-                obj->insert(i);
+            auto obj = DTO_Data::createShared();
+            auto info = m.interfaces_activity_monitor_read();
+            rapidjson::MemoryPoolAllocator<> alloc;
+            rapidjson::Value data_obj;
+            data_obj.SetObject();
+            for (auto &i : info) {
+                data_obj.AddMember(
+                    rapidjson::Value(i.first.c_str(), i.first.size()),
+                    rapidjson::Value(i.second), alloc);
             }
+            obj->code = obj->SUCCESS;
+            obj->msg = "获取成功";
+            obj->total = info.size();
+            obj->size = info.size();
+            obj->data = std::make_shared<std::string>(utils_to_json(data_obj));
             return _return(
                 controller->createDtoResponse(Status::CODE_200, obj));
         }
@@ -167,7 +229,7 @@ struct Controller : public oatpp::web::server::api::ApiController {
         std::future<bool> res;
         Action act() override {
             std::string ifname = request->getQueryParameter("if", "");
-            auto ret = DTO_Status::createShared();
+            auto ret = DTO_Base::createShared();
             if (!res.valid() && !m.capture_is_running())
                 res = m.capture_start(ifname);
             if (res.valid()) {
@@ -178,16 +240,16 @@ struct Controller : public oatpp::web::server::api::ApiController {
             }
             if (res.valid()) {
                 if (res.get()) {
-                    ret->code = DTO_Status::SUCCESS;
+                    ret->code = DTO_Base::SUCCESS;
                     ret->msg = "启动成功!";
                 }
                 else {
-                    ret->code = DTO_Status::FAILURE;
+                    ret->code = DTO_Base::FAILURE;
                     ret->msg = "启动失败!";
                 }
             }
             else if (m.capture_is_running()) {
-                ret->code = DTO_Status::RUNNING;
+                ret->code = DTO_Base::RUNNING;
                 ret->msg = "捕获运行中!";
             }
             return _return(
@@ -201,7 +263,7 @@ struct Controller : public oatpp::web::server::api::ApiController {
         Action act() override {
             std::string path =
                 utils_url_decode(request->getQueryParameter("path"));
-            auto ret = DTO_Status::createShared();
+            auto ret = DTO_Base::createShared();
             if (!res.valid()) res = m.capture_from_file(path);
             if (res.valid()) {
                 std::future_status stat = res.wait_for(std::chrono::seconds(0));
@@ -210,11 +272,11 @@ struct Controller : public oatpp::web::server::api::ApiController {
                 }
             }
             if (res.get()) {
-                ret->code = DTO_Status::SUCCESS;
+                ret->code = DTO_Base::SUCCESS;
                 ret->msg = "加载完成!";
             }
             else {
-                ret->code = DTO_Status::FAILURE;
+                ret->code = DTO_Base::FAILURE;
                 ret->msg = "加载失败!";
             }
             return _return(
@@ -226,7 +288,7 @@ struct Controller : public oatpp::web::server::api::ApiController {
         ENDPOINT_ASYNC_INIT(capture_stop);
         std::future<bool> res;
         Action act() override {
-            auto ret = DTO_Status::createShared();
+            auto ret = DTO_Base::createShared();
             if (!res.valid()) res = m.capture_stop();
             if (res.valid()) {
                 std::future_status stat = res.wait_for(std::chrono::seconds(0));
@@ -235,11 +297,11 @@ struct Controller : public oatpp::web::server::api::ApiController {
                 }
             }
             if (res.get()) {
-                ret->code = DTO_Status::SUCCESS;
+                ret->code = DTO_Base::SUCCESS;
                 ret->msg = "停止成功!";
             }
             else {
-                ret->code = DTO_Status::FAILURE;
+                ret->code = DTO_Base::FAILURE;
                 ret->msg = "停止失败!";
             }
             return _return(
@@ -250,19 +312,33 @@ struct Controller : public oatpp::web::server::api::ApiController {
     ENDPOINT_ASYNC("GET", "/capture/get/brief", capture_get_brief) {
         ENDPOINT_ASYNC_INIT(capture_get_brief);
         Action act() override {
-            uint32_t pos, len;
+            auto ret = DTO_Data::createShared();
+            ret->code = ret->FAILURE;
+            ret->msg = "获取失败";
+            std::unordered_map<std::string, std::string> params;
             try {
-                pos = std::stoul(request->getQueryParameter("pos", "0"));
-                len = oatpp::utils::conversion::strToUInt32(
-                    request->getQueryParameter("len", "0")->c_str());
+                for (auto &i : request->getQueryParameters().getAll()) {
+                    params[utils_url_decode(i.first.std_str())] =
+                        utils_url_decode(i.second.std_str());
+                }
             }
             catch (...) {
-                return _return(controller->createResponse(Status::CODE_400));
+                return _return(
+                    controller->createDtoResponse(Status::CODE_400, ret));
             }
-
-            std::string ret = m.capture_get_brief(pos, len);
-            auto res = controller->createResponse(Status::CODE_200, ret);
-            res->putHeader("Content-Type", "application/json");
+            ret->code = ret->SUCCESS;
+            ret->msg = "获取成功";
+            ret->total = m.capture_get_brief_total();
+            auto data = m.capture_get_brief(params);
+            rapidjson::Value data_obj;
+            rapidjson::MemoryPoolAllocator<> alloc;
+            data_obj.SetArray();
+            for (auto &i : *data) {
+                data_obj.PushBack(i->to_json_obj(alloc), alloc);
+            }
+            ret->size = data->size();
+            ret->data = std::make_shared<std::string>(utils_to_json(data_obj));
+            auto res = controller->createDtoResponse(Status::CODE_200, ret);
             return _return(res);
         }
     };
@@ -270,17 +346,27 @@ struct Controller : public oatpp::web::server::api::ApiController {
     ENDPOINT_ASYNC("GET", "/capture/get/detail", capture_get_detail) {
         ENDPOINT_ASYNC_INIT(capture_get_detail);
         Action act() override {
+            auto ret = DTO_Data::createShared();
+            ret->code = ret->FAILURE;
+            ret->msg = "获取失败";
             uint32_t pos;
             try {
                 pos = std::stoul(request->getQueryParameter("idx", ""));
             }
             catch (...) {
-                return _return(controller->createResponse(Status::CODE_400));
+                return _return(
+                    controller->createDtoResponse(Status::CODE_400, ret));
             }
 
-            std::string ret = m.capture_get_detail(pos);
-            auto res = controller->createResponse(Status::CODE_200, ret);
-            res->putHeader("Content-Type", "application/json");
+            ret->data =
+                std::make_shared<std::string>(m.capture_get_detail(pos));
+            if (!ret->data->empty()) {
+                ret->code = ret->SUCCESS;
+                ret->msg = "获取成功";
+                ret->total = 1;
+                ret->size = 1;
+            }
+            auto res = controller->createDtoResponse(Status::CODE_200, ret);
             return _return(res);
         }
     };
@@ -342,6 +428,9 @@ class AppComponent {
         apiObjectMapper)([] {
         auto json = oatpp::parser::json::mapping::ObjectMapper::createShared();
         json->getSerializer()->getConfig()->useBeautifier = true;
+        json->getSerializer()->setSerializerMethod(
+            oatpp::__class::RawString::CLASS_ID,
+            oatpp::__class::RawString::SerializerMethod);
         return json;
     }());
 };

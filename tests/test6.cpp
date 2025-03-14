@@ -64,15 +64,13 @@ void test() {
 
 int main() {
     auto db = TsharkDB::connect("dump_data/temp.db3");
-    DBBriefTable t{db};
-    DBFixed f{db};
     {
         utils_timer time;
         int c = 4;
         uint32_t ret;
         while (c--) {
             time.beg();
-            ret = t.size();
+            ret = db->table_brief->size();
             time.end();
         }
         std::cout << ret << std::endl;
@@ -82,24 +80,24 @@ int main() {
         int c = 4;
         while (c--) {
             time.beg();
-            auto data = t.select(0, 1000, f);
+            auto data = db->table_brief->select(0, 1000, *db->table_fixed);
             // for (auto &i : data) {
             //     std::cout << i->to_json() << std::endl;
             // }
             time.end();
         }
     }
-    {
-        utils_timer time;
-        int c = 4;
-        while (c--) {
-            time.beg();
-            auto data = t.select(1000000, 1000, f);
-            // for (auto &i : data) {
-            //     std::cout << i->to_json() << std::endl;
-            // }
-            time.end();
-        }
-    }
+    // {
+    //     utils_timer time;
+    //     int c = 4;
+    //     while (c--) {
+    //         time.beg();
+    //         auto data = db->table_brief->select(0, 1000, *db->table_fixed);
+    //         // for (auto &i : data) {
+    //         //     std::cout << i->to_json() << std::endl;
+    //         // }
+    //         time.end();
+    //     }
+    // }
     return 0;
 }

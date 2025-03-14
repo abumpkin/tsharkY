@@ -562,13 +562,11 @@ class TSharkManager {
 
     std::shared_ptr<ParserStreamPacket> ps;
     std::shared_ptr<TsharkDB> db;
-    std::unique_ptr<DBBriefTable> db_brief;
-    std::unique_ptr<DBFixed> db_fixed;
 
     SharkLoader::LoaderEvent create_loader_event() {
         return [&](SharkLoader::Event e) {
             if (e == SharkLoader::E_FIXED_UPDATE) {
-                db_fixed->save(capture_thread.loader->fixed_data,
+                db->table_fixed->save(capture_thread.loader->fixed_data,
                     capture_thread.loader->get_format());
             }
         };
@@ -589,7 +587,7 @@ class TSharkManager {
                 // 开始事务
                 if (!db->has_transaction()) db->start_transaction();
                 // 插入数据到数据库
-                db_brief->insert(p);
+                db->table_brief->insert(p);
                 // LOG_F(INFO, "usecount: %zu %zu", p.use_count(),
             }
         };
@@ -599,8 +597,6 @@ class TSharkManager {
     public:
     TSharkManager() {
         db = TsharkDB::connect("dump_data/temp.db3");
-        db_brief = std::make_unique<DBBriefTable>(db);
-        db_fixed = std::make_unique<DBFixed>(db);
     }
 
     std::future<bool> capture_start(
@@ -630,20 +626,20 @@ class TSharkManager {
         return capture_thread.capturing_status();
     }
 
-    std::string capture_get_brief(uint32_t pos = 0, uint32_t len = 0) {
-        rapidjson::Document obj;
-        rapidjson::MemoryPoolAllocator<> allocator;
-        obj.SetArray();
-        std::vector<std::shared_ptr<Packet>> list =
-            db_brief->select(pos, len, *db_fixed);
-        for (auto &i : list) {
-            obj.PushBack(i->to_json_obj(allocator), allocator);
-        }
-        return utils_to_json(obj);
+    std::unique_ptr<std::vector<std::shared_ptr<Packet>>> capture_get_brief(
+        std::unordered_map<std::string, std::string> const &params) {
+        auto ret = std::make_unique<std::vector<std::shared_ptr<Packet>>>(
+            db->table_brief->select(params, *db->table_fixed));
+        return ret;
+    }
+
+    uint32_t capture_get_brief_total() {
+        return db->table_brief->size();
     }
 
     std::string capture_get_detail(uint32_t idx) {
-        std::shared_ptr<Packet> p = db_brief->select(idx, *db_fixed);
+        std::shared_ptr<Packet> p =
+            db->table_brief->select(idx, *db->table_fixed);
         if (!p) return "";
         std::unique_ptr<PacketDefineDecode> dec = Analyzer::packet_detail(p);
         return dec->to_json();

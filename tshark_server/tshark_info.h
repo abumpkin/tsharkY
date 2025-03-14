@@ -144,6 +144,33 @@ struct IfaceInfo {
     std::string friendly_name;
     std::vector<std::string> addrs;
     InterfaceType type;
+
+    rapidjson::Value to_json_obj(
+        rapidjson::MemoryPoolAllocator<> &allocator) const {
+        rapidjson::Value json_obj;
+        json_obj.SetObject();
+        json_obj.AddMember(
+            "name", rapidjson::Value(name.c_str(), name.size()), allocator);
+        json_obj.AddMember("friendly_name",
+            rapidjson::Value(friendly_name.c_str(), friendly_name.size()),
+            allocator);
+        rapidjson::Value json_addrs;
+        json_addrs.SetArray();
+        for (auto &i : addrs) {
+            json_addrs.PushBack(
+                rapidjson::Value(i.c_str(), i.size()), allocator);
+        }
+        json_obj.AddMember("addrs", json_addrs, allocator);
+        json_obj.AddMember("type",
+            rapidjson::Value(InterfaceTypeToString(type), allocator),
+            allocator);
+        return json_obj;
+    }
+    std::string to_json(bool pretty = false) {
+        rapidjson::MemoryPoolAllocator<> allocator;
+        rapidjson::Value json_obj = to_json_obj(allocator);
+        return utils_to_json(json_obj, pretty);
+    }
 };
 
 struct PacketDefineDecode {
@@ -202,9 +229,9 @@ struct PacketDefineDecode {
         fields.SetArray();
         obj.SetObject();
         obj.AddMember(
-            "name", rapidjson::Value(field.name.c_str(), allocator), allocator);
+            "name", rapidjson::Value(field.name.c_str(), field.name.size()), allocator);
         obj.AddMember("showname",
-            rapidjson::Value(field.showname.c_str(), allocator), allocator);
+            rapidjson::Value(field.showname.c_str(), field.showname.size()), allocator);
         obj.AddMember("pos", field.pos, allocator);
         obj.AddMember("size", field.size, allocator);
         for (auto const &i : field.fields) {
