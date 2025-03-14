@@ -31,6 +31,7 @@
 #include <mutex>
 #include <queue>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -62,6 +63,8 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
         char const *ipv6_dst = "ipv6.dst";
         char const *udp_port = "udp.port";
         char const *tcp_port = "tcp.port";
+        char const *ip_proto = "ip.proto";
+        char const *ipv6_nxt = "ipv6.nxt";
     };
     constexpr static const uint32_t CMD_FIELD_NUM =
         sizeof(CMD_Fields) / sizeof(char const *);
@@ -228,8 +231,14 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
             packet->src_location = utils_ip2region(packet->src_ip);
             packet->dst_location = utils_ip2region(packet->dst_ip);
 
-            // 保存
-            // p->packets_list.push_back(packet);
+            // 传输层协议号
+            const char *p_proto_code = strlen(cmd_field.ipv6_nxt)
+                                           ? cmd_field.ipv6_nxt
+                                           : cmd_field.ip_proto;
+            if (strlen(p_proto_code)) {
+                packet->ip_proto_code =
+                    static_cast<Packet::IP_PROTO_CODE>(std::stoi(p_proto_code));
+            }
             // 其他处理
             if (p->handler) {
                 p->handler(packet, Status::PKT_ARRIVE);

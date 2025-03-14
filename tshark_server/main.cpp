@@ -101,7 +101,6 @@ class DTO_Base : public oatpp::DTO {
 
 class DTO_Data : public DTO_Base {
     DTO_INIT(DTO_Data, DTO_Base);
-    DTO_FIELD(UInt32, total, "total") = 0u;
     DTO_FIELD(UInt32, size, "size") = 0u;
     DTO_FIELD(RawStringWrapper, data, "data");
 };
@@ -129,7 +128,6 @@ struct Controller : public oatpp::web::server::api::ApiController {
             auto ret = DTO_Data::createShared();
             ret->code = ret->SUCCESS;
             ret->msg = "获取成功";
-            ret->total = ifaces.size();
             ret->size = ifaces.size();
             rapidjson::Value list;
             rapidjson::MemoryPoolAllocator<> alloc;
@@ -216,7 +214,6 @@ struct Controller : public oatpp::web::server::api::ApiController {
             }
             obj->code = obj->SUCCESS;
             obj->msg = "获取成功";
-            obj->total = info.size();
             obj->size = info.size();
             obj->data = std::make_shared<std::string>(utils_to_json(data_obj));
             return _return(
@@ -328,7 +325,6 @@ struct Controller : public oatpp::web::server::api::ApiController {
             }
             ret->code = ret->SUCCESS;
             ret->msg = "获取成功";
-            ret->total = m.capture_get_brief_total();
             auto data = m.capture_get_brief(params);
             rapidjson::Value data_obj;
             rapidjson::MemoryPoolAllocator<> alloc;
@@ -363,8 +359,30 @@ struct Controller : public oatpp::web::server::api::ApiController {
             if (!ret->data->empty()) {
                 ret->code = ret->SUCCESS;
                 ret->msg = "获取成功";
-                ret->total = 1;
                 ret->size = 1;
+            }
+            auto res = controller->createDtoResponse(Status::CODE_200, ret);
+            return _return(res);
+        }
+    };
+
+    ENDPOINT_ASYNC("GET", "/capture/get/sessions", capture_get_sessions) {
+        ENDPOINT_ASYNC_INIT(capture_get_sessions);
+        Action act() override {
+            auto ret = DTO_Data::createShared();
+            ret->code = ret->FAILURE;
+            ret->msg = "获取失败";
+            auto session_analyzer = m.get_session_analyzer();
+            if (!session_analyzer)
+                return _return(
+                    controller->createDtoResponse(Status::CODE_400, ret));
+
+            if (!session_analyzer->sessions.empty()) {
+                ret->data =
+                    std::make_shared<std::string>(session_analyzer->to_json());
+                ret->code = ret->SUCCESS;
+                ret->msg = "获取成功";
+                ret->size = session_analyzer->sessions.size();
             }
             auto res = controller->createDtoResponse(Status::CODE_200, ret);
             return _return(res);

@@ -21,9 +21,12 @@
  */
 
 #pragma once
+#include "rapidjson/document.h"
 #include "tshark_info.h"
 #include "unistream.h"
 #include <memory>
+#include <unordered_set>
+#include <vector>
 
 struct Analyzer {
     static std::unique_ptr<PacketDefineDecode> packet_detail(
@@ -46,4 +49,41 @@ struct Analyzer {
         dec = std::make_unique<PacketDefineDecode>(xml);
         return dec;
     }
+
+    struct SessionAnalyzer : TsharkDataObj<SessionAnalyzer> {
+        std::unordered_set<std::shared_ptr<Session>> sessions;
+
+        private:
+        SessionAnalyzer() = default;
+
+        public:
+        static std::shared_ptr<SessionAnalyzer> create() {
+            return std::make_shared<SessionAnalyzer>(SessionAnalyzer());
+        }
+
+        void check_packet(Packet &packet) {
+            if (packet.ip_proto_code == Packet::TCP ||
+                packet.ip_proto_code == Packet::UDP) {
+                auto sess = Session::create(packet);
+                if (sessions.count(sess)) {
+                    sessions.find(sess)->get()->update(packet);
+                }
+                else {
+                    sess->session_id = sessions.size();
+                    sess->update(packet);
+                    sessions.emplace(sess);
+                }
+            }
+        }
+
+        rapidjson::Value to_json_obj(
+            rapidjson::MemoryPoolAllocator<> &allocator) const {
+            rapidjson::Value ret;
+            ret.SetArray();
+            for (auto &i : sessions) {
+                ret.PushBack(i->to_json_obj(allocator), allocator);
+            }
+            return ret;
+        }
+    };
 };

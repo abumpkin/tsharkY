@@ -25,7 +25,6 @@
 #include "database.h"
 #include "mutils.h"
 #include "parser_stream.h"
-#include "rapidjson/allocators.h"
 #include "traffic_statistics.h"
 #include "tshark_info.h"
 #include "unistream.h"
@@ -557,11 +556,43 @@ struct SharkCaptureThread {
 };
 
 class TSharkManager {
-    SharkCaptureThread capture_thread;
+    // 网卡监视器
     InterfacesActivityThread statistics_thread;
-
+    // 加载器
+    SharkCaptureThread capture_thread;
+    // 解析器
     std::shared_ptr<ParserStreamPacket> ps;
+    // 数据库
     std::shared_ptr<TsharkDB> db;
+    // 会话分析器
+    std::shared_ptr<Analyzer::SessionAnalyzer> session_analyzer;
+
+    // 重建解析器
+    void recreate_ps() {
+        // 重建会话分析器
+        session_analyzer = Analyzer::SessionAnalyzer::create();
+        // 重建数据库
+        db->recreate();
+        // 包解析结果处理函数
+        auto handler = [&](std::shared_ptr<Packet> p,
+                           ParserStreamPacket::Status st) {
+            // 暂时无新数据包到达，提交事务
+            if (st == ParserStreamPacket::Status::PKT_NONE) {
+                db->commit_transaction();
+            }
+            // 新数据包到达，进行分析、存储
+            if (st == ParserStreamPacket::Status::PKT_ARRIVE) {
+                // 分析会话
+                session_analyzer->check_packet(*p);
+                // 开始事务(如果没有)
+                if (!db->has_transaction()) db->start_transaction();
+                // 插入数据到数据库
+                db->table_brief->insert(p);
+                // LOG_F(INFO, "usecount: %zu %zu", p.use_count(),
+            }
+        };
+        ps = std::make_shared<ParserStreamPacket>(handler);
+    }
 
     SharkLoader::LoaderEvent create_loader_event() {
         return [&](SharkLoader::Event e) {
@@ -572,27 +603,6 @@ class TSharkManager {
         };
     }
 
-    // 重新创建解析流
-    void recreate_ps() {
-        db->recreate();
-        // 包解析结果处理函数
-        auto handler = [&](std::shared_ptr<Packet> p,
-                           ParserStreamPacket::Status st) {
-            // 暂时无新数据包到达，提交事务
-            if (st == ParserStreamPacket::Status::PKT_NONE) {
-                db->commit_transaction();
-            }
-            // 新数据包到达，进行存储
-            if (st == ParserStreamPacket::Status::PKT_ARRIVE) {
-                // 开始事务
-                if (!db->has_transaction()) db->start_transaction();
-                // 插入数据到数据库
-                db->table_brief->insert(p);
-                // LOG_F(INFO, "usecount: %zu %zu", p.use_count(),
-            }
-        };
-        ps = std::make_shared<ParserStreamPacket>(handler);
-    }
 
     public:
     TSharkManager() {
@@ -702,5 +712,9 @@ class TSharkManager {
     std::unordered_map<std::string, uint32_t>
     interfaces_activity_monitor_read() {
         return statistics_thread.read();
+    }
+
+    std::shared_ptr<Analyzer::SessionAnalyzer> get_session_analyzer() const {
+        return session_analyzer;
     }
 };
