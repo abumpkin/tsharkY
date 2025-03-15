@@ -18,7 +18,7 @@ int main() {
         // std::cout << p->to_json() << std::endl;
         p->to_json();
     };
-    std::string path = "dump_data/capture.pcap";
+    std::string path = "test_data/data.pcapng";
     {
         utils_timer t;
         int c = 4;
@@ -38,7 +38,7 @@ int main() {
                 std::make_shared<ParserStreamPacketDetail>();
             std::shared_ptr<UniStreamInterface> data =
                 std::make_shared<UniStreamFile>(path);
-            SharkPcapLoader loader{data};
+            SharkPcapngLoader loader{data};
             loader.load({ps});
             t.end();
             // std::cout << ps->packets_list.size() << std::endl;

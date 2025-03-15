@@ -50,28 +50,50 @@ inline class {
         return SetConsoleOutputCP(65001);
     }();
 } WIN_UTF8;
+
+inline std::string utils_exec_cmd(const std::string& cmd) {
+    std::string out;
+
+    // 使用 _popen 并采用二进制读取模式
+    FILE* pipe = _popen(cmd.c_str(), "rb");
+    if (!pipe) {
+        return out; // 返回空字符串表示失败
+    }
+
+    char buffer[4096];
+    size_t count;
+
+    // 循环读取命令输出
+    while ((count = fread(buffer, 1, sizeof(buffer), pipe)) > 0) {
+        out.append(buffer, count);
+    }
+
+    _pclose(pipe); // 关闭管道
+    return out;
+}
 #else
 inline class {
 } WIN_UTF8;
+
+inline std::string const utils_exec_cmd(std::string const &cmd) {
+    std::string out;
+    FILE *pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+        return out;
+    }
+
+    char buf[4096];
+    size_t len;
+    while (true) {
+        len = fread(buf, 1, sizeof(buf), pipe);
+        if (len <= 0) break;
+        out.append(buf, len);
+    }
+    pclose(pipe);
+    return out;
+}
 #endif
 
-// inline std::string const utils_exec_cmd(std::string const &cmd) {
-//     std::string out;
-//     FILE *pipe = popen(cmd.c_str(), "r");
-//     if (!pipe) {
-//         return out;
-//     }
-
-//     char buf[4096];
-//     size_t len;
-//     while (true) {
-//         len = fread(buf, 1, sizeof(buf), pipe);
-//         if (len <= 0) break;
-//         out.append(buf, len);
-//     }
-//     pclose(pipe);
-//     return out;
-// }
 
 inline std::string const utils_data_to_hex(std::vector<char> const &data) {
     std::string ret;

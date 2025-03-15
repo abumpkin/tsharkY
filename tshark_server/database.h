@@ -538,8 +538,10 @@ struct TsharkDB {
 
     static std::shared_ptr<TsharkDB> connect(std::string const &path) {
         auto ret = std::make_shared<TsharkDB>(TsharkDB(path));
-        ret->table_fixed = std::make_unique<TableFixed>(ret.get());
-        ret->table_brief = std::make_unique<TableBrief>(ret.get());
+        if (ret->db) {
+            ret->table_fixed = std::make_unique<TableFixed>(ret.get());
+            ret->table_brief = std::make_unique<TableBrief>(ret.get());
+        }
         return ret;
     }
 

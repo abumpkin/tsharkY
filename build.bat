@@ -27,5 +27,5 @@ REM 运行CMake以配置构建目录
 cmake -B build -DCMAKE_BUILD_TYPE=%CMAKE_BUILD_TYPE% --preset=%PRESET%
 REM 构建项目
 cmake --build build --target help
-cmake --build build
+cmake --build build --target tshark_server
 echo 构建完成。
