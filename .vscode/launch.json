@@ -1,14 +1,50 @@
 {
-    // 使用 IntelliSense 了解相关属性。 
+    // 使用 IntelliSense 了解相关属性。
     // 悬停以查看现有属性的描述。
     // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
         {
-            "type": "lldb",
+            "type": "cppvsdbg",
+            "name": "win32 - 当前 test 代码",
+            "request": "launch",
+            "program": "${workspaceRoot}${/}build${/}tests${/}${fileBasenameNoExtension}.exe",
+            "cwd": "${workspaceRoot}",
+            "enableDebugHeap": true,
+            "symbolOptions": {
+                "searchPaths": [
+                    "${workspaceRoot}${/}build${/}tests"
+                ],
+                "searchMicrosoftSymbolServer": false
+            },
+            "console": "integratedTerminal",
+            "requireExactSource": true,
+            "stopAtEntry": false,
+            "preLaunchTask": "生成当前 test",
+        },
+        {
+            "type": "cppvsdbg",
+            "name": "win32 - tshark_server",
+            "request": "launch",
+            "program": "${workspaceRoot}${/}build${/}tshark_server${/}tshark_server.exe",
+            "cwd": "${workspaceRoot}",
+            "enableDebugHeap": true,
+            "symbolOptions": {
+                "searchPaths": [
+                    "${workspaceRoot}${/}build${/}tests"
+                ],
+                "searchMicrosoftSymbolServer": false
+            },
+            "console": "integratedTerminal",
+            "requireExactSource": true,
+            "stopAtEntry": false,
+            "preLaunchTask": "生成 tshark_servert",
+        },
+        {
+            "type": "lldb-dap",
             "request": "launch",
             "name": "tshark_server",
-            "program": "${workspaceFolder}/build/tshark_server/tshark_server",
+            "program": "${workspaceFolder}${/}build${/}tshark_server${/}tshark_server",
             "args": [],
             "cwd": "${workspaceFolder}",
             "preLaunchTask": "生成 tshark_server",
@@ -17,9 +53,8 @@
             "type": "lldb",
             "request": "launch",
             "name": "当前 test 代码",
-            "program": "${workspaceFolder}/build/tests/${fileBasenameNoExtension}",
-            "args": [],
-            "cwd": "${workspaceFolder}",
+            "program": "${workspaceFolder}${/}build${/}tests${/}${fileBasenameNoExtension}",
+            "cwd": "${workspaceRoot}",
             "preLaunchTask": "生成当前 test",
         }
     ]

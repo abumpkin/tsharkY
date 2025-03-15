@@ -1,0 +1,32 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 19,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "windows-nmake-x64",
+      "generator": "NMake Makefiles",
+      "description": "Windows NMake 64-bit (x86_64)",
+      "binaryDir": "${sourceDir}/build/windows-x64",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "cl.exe",
+        "CMAKE_CXX_COMPILER": "cl.exe",
+        "CMAKE_C_FLAGS": "/D_AMD64_",
+        "CMAKE_CXX_FLAGS": "/D_AMD64_"
+      }
+    },
+    {
+      "name": "windows-nmake-x86",
+      "generator": "NMake Makefiles",
+      "description": "Windows NMake 32-bit (x86)",
+      "binaryDir": "${sourceDir}/build/windows-x86",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "cl.exe",
+        "CMAKE_CXX_COMPILER": "cl.exe"
+      }
+    }
+  ]
+}

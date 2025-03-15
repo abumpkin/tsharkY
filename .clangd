@@ -1,0 +1,13 @@
+InlayHints:
+  BlockEnd: No
+  Designators: Yes
+  Enabled: Yes
+  ParameterNames: No
+  DeducedTypes: Yes
+  TypeNameLimit: 24
+Completion:
+  ArgumentLists: Delimiters
+Diagnostics:
+  ClangTidy:
+    Add:
+    Remove:

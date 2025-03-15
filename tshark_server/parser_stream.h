@@ -25,7 +25,9 @@
 #include "streambuf.h"
 #include "tshark_info.h"
 #include "unistream.h"
+#include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -85,7 +87,7 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
     ParserStreamPacket(PacketHandler handler = nullptr) : stop_ctl(false) {
         CMD_Fields cmd_field;
         std::vector<std::string> cmd_args = {
-            TSHARK_PATH " -Q -l -r - -T fields"};
+            TSHARK_PATH " -Q -l -i - -T fields"};
         for (uint32_t i = 0; i < CMD_FIELD_NUM; i++) {
             cmd_args.push_back("-e");
             cmd_args.push_back(reinterpret_cast<char const **>(&cmd_field)[i]);
@@ -232,12 +234,17 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
             packet->dst_location = utils_ip2region(packet->dst_ip);
 
             // 传输层协议号
-            const char *p_proto_code = strlen(cmd_field.ipv6_nxt)
-                                           ? cmd_field.ipv6_nxt
-                                           : cmd_field.ip_proto;
-            if (strlen(p_proto_code)) {
+            const char *p_proto_code = cmd_field.ip_proto;
+            if (strlen(p_proto_code) && std::isdigit(*p_proto_code)) {
                 packet->ip_proto_code =
                     static_cast<Packet::IP_PROTO_CODE>(std::stoi(p_proto_code));
+            }
+            else {
+                p_proto_code = cmd_field.ipv6_nxt;
+                if (strlen(p_proto_code) && std::isdigit(*p_proto_code)) {
+                    packet->ip_proto_code = static_cast<Packet::IP_PROTO_CODE>(
+                        std::stoi(p_proto_code));
+                }
             }
             // 其他处理
             if (p->handler) {
@@ -269,7 +276,7 @@ struct ParserStreamPacketDetail : ParserStream, UniStreamDualPipeU {
         : UniStreamDualPipeU(cmd) {}
     ParserStreamPacketDetail(PacketHandler handler = nullptr)
         : packets_pending(0), stop_ctl(false) {
-        std::string cmd = TSHARK_PATH " -Q -l -r - -T pdml";
+        std::string cmd = TSHARK_PATH " -Q -l -i - -T pdml";
         new (this)(ParserStreamPacketDetail)(cmd);
         this->handler = handler;
         p_t = std::make_unique<std::thread>(thread, this);

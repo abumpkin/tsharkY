@@ -10,24 +10,49 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "default build static library")
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_VERBOSE_MAKEFILE ON)
 
+message("Build Type: ${CMAKE_BUILD_TYPE}")
+
 if (LINUX)
-    set(CMAKE_GENERATOR "Unix Makefiles" CACHE INTERNAL "")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
     set(CMAKE_CXX_FLAGS_RELEASE "-O2")
-    
+
 endif()
 if (WIN32)
-    set(CMAKE_GENERATOR "Visual Studio 17 2022" CACHE INTERNAL "")
-    set(CMAKE_GENERATOR_PLATFORM "x64" CACHE INTERNAL "")
+    message("============================================")
+    message("-- Generator: ${CMAKE_GENERATOR}")
+    message("-- Toolset: ${CMAKE_GENERATOR_TOOLSET}")
+    message("-- Instance: ${CMAKE_GENERATOR_INSTANCE}")
+    message("-- Platform: ${CMAKE_GENERATOR_PLATFORM}")
+    message("============================================")
 endif()
 if (MSVC)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "/Zi")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W4") # 设置为警告级别4
-    add_definitions(-D_CRT_SECURE_NO_WARNINGS) # 忽略某些安全相关的警告
-    set(CMAKE_CXX_FLAGS_RELEASE "/O2 /Ob2 /MD") # Release模式下的优化选项
-    set(CMAKE_CXX_FLAGS_DEBUG "/Od /Ob0 /MTd") # Debug模式下的非优化选项
-    add_definitions(-DWIN32 -D_WINDOWS)
+    # :: For x64
+    # "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" x64
+    # :: For x86
+    # "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" x86
+    # set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    # set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "/Zi")
+    # 忽略某些安全相关的警告
+    add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+    # Windows 宏
+    add_definitions(-DWIN32 -D_WINDOWS -DNOMINMAX)
+    # 设置为警告级别4
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W4")
+    # 启用 RTTI
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /GR")
+    # 启用 C++ 标准异常处理
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /EHsc")
+    # 启用源代码 utf8 支持
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /utf-8")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /utf-8")
+    # 启用多处理器编译
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /MP")
+    # Release模式下的优化选项
+    set(CMAKE_CXX_FLAGS_RELEASE "/O2 /Ob2 /MD")
+    # Debug模式下的非优化选项
+    set(CMAKE_CXX_FLAGS_DEBUG "/Od /Ob0 /MTd /Zi")
+
 endif()
 
 # 定义一个名为 clean_build 的自定义目标

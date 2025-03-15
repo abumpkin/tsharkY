@@ -31,12 +31,14 @@
 //     {"Internet Control Message Protocol", "互联网控制消息协议ICMP"},
 //     {"Version", "版本"}, {"Header Length", "头部长度"},
 //     {"Differentiated Services Field", "差分服务字段"},
-//     {"Total Length", "总长度"}, {"Identification", "标识符"}, {"Flags", "标志"},
+//     {"Total Length", "总长度"}, {"Identification", "标识符"}, {"Flags",
+//     "标志"},
 //     {"Time to Live", "生存时间"},
 //     {"Transmission Control Protocol", "TCP传输控制协议"},
 //     {"User Datagram Protocol", "UDP用户数据包协议"},
 //     {"Domain Name System", "DNS域名解析系统"},
-//     {"Header Checksum", "头部校验和"}, {"Header checksum status", "校验和状态"},
+//     {"Header Checksum", "头部校验和"}, {"Header checksum status",
+//     "校验和状态"},
 //     {"Source Address", "源地址"}, {"Destination Address", "目的地址"},
 //     {"Source Port", "源端口"}, {"Destination Port", "目的端口"},
 //     {"Next Sequence Number", "下一个序列号"}, {"Sequence Number", "序列号"},
@@ -116,7 +118,8 @@
 //             if (word.size()) {
 //                 std::cout << "找到待翻译文本：" << preword << std::endl;
 //                 ret.replace(
-//                     rp - offset[rp], i - offset[i] - rp + offset[rp] + 1, word);
+//                     rp - offset[rp], i - offset[i] - rp + offset[rp] + 1,
+//                     word);
 //                 offset.push_back(offset[rp] + (int)len - word.size());
 //                 continue;
 //             }
@@ -131,7 +134,6 @@ int main() {
     // utils_translator t;
     // for (auto &i : map) {
     //     t.add(i.first, i.second);
-    // }
     std::string ori = "General information";
     std::cout << "原字符串：" << ori << std::endl;
     std::cout << "长度：" << ori.size() << std::endl;

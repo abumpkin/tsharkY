@@ -7,20 +7,21 @@
 #include "unistream.h"
 #include <memory>
 
-std::string path = "dump_data/capture.pcap";
+std::string path = "test_data/data.pcapng";
 void time_test() {
     {
         utils_timer t;
         int c = 5;
         while (c--) {
             t.beg();
-            std::string ret = utils_exec_cmd(
+            system((
                 "tshark -Q -l -r " + path +
                 " -T fields -e frame.number -e frame.time_epoch "
                 "-e _ws.col.Protocol -e _ws.col.Info -e eth.src -e eth.dst -e "
                 "ip.src -e ip.dst -e ipv6.src -e ipv6.dst -e udp.port -e "
                 "tcp.port "
-                "> /dev/null");
+                "> /dev/null")
+                    .c_str());
             t.end();
         }
     }
@@ -42,25 +43,19 @@ void time_test() {
 }
 
 void print_test() {
-    auto p = [](std::shared_ptr<Packet> p) {
-        std::cout << p->to_json() << std::endl;
+    auto p = [](std::shared_ptr<Packet> p, ParserStreamPacket::Status s) {
+        if (s != ParserStreamPacket::Status::PKT_NONE)
+            std::cout << p->to_json() << std::endl;
     };
     std::shared_ptr<ParserStreamPacket> ps =
         std::make_shared<ParserStreamPacket>(p);
     std::shared_ptr<UniStreamInterface> data =
         std::make_shared<UniStreamFile>(path);
-    SharkPcapLoader loader{data};
+    SharkPcapngLoader loader{data};
     loader.load({ps});
 }
 
 int main() {
-    std::shared_ptr<ParserStreamPacket> ps =
-        std::make_shared<ParserStreamPacket>();
-    std::shared_ptr<UniStreamInterface> data =
-        std::make_shared<UniStreamFile>(path);
-    SharkPcapLoader loader{data};
-    loader.load({ps});
-    std::unique_ptr<PacketDefineDecode> dec = Analyzer::packet_detail(ps->packets_list[0]);
-    std::cout << dec->to_json() << std::endl;
+    print_test();
     return 0;
 }

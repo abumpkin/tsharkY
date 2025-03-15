@@ -6,44 +6,171 @@
     {
       "label": "Clean",
       "type": "shell",
-      "command": [
-        "cmake -B build --fresh",
-        "&&",
-        "cmake --build build --target clean_build"
-      ]
+      "linux": {
+        "command": [
+          "cmake -B build --fresh",
+          "&&",
+          "cmake --build build --target clean_build"
+        ]
+      },
+      "windows": {
+        "command": [
+          "cmd /c rmdir /s /q build ; set ERRORLEVEL=0"
+        ]
+      },
+      "icon": {
+        "color": "terminal.ansiBlue",
+        "id": "trash"
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "none"
     },
     {
       "label": "生成 Release 编译",
       "type": "shell",
-      "command": [
-        "cmake -B build -DCMAKE_BUILD_TYPE=Release",
-        "&&",
-        "cmake --build build"
+      "linux": {
+        "command": [
+          "cmake -B build",
+          "&&",
+          "cmake --build build"
+        ],
+      },
+      "windows": {
+        "command": "cmd /c build.bat x64",
+      },
+      "options": {
+        "env": {
+          "CMAKE_BUILD_TYPE": "Release"
+        }
+      },
+      "dependsOn": [
+        "Clean"
       ],
-      "dependsOn": ["Clean"]
+      "icon": {
+        "color": "terminal.ansiGreen",
+        "id": "gather"
+      },
+      "group": "build"
     },
     {
       "label": "生成 Debug 构建",
       "type": "shell",
-      "command": [
-        "cmake -B build -DCMAKE_BUILD_TYPE=Debug",
-        "&&",
-        "cmake --build build --target help"
-      ]
+      "linux": {
+        "command": [
+          "cmake -B build",
+          "&&",
+          "cmake --build build --target help"
+        ]
+      },
+      "windows": {
+        "command": [
+          "cmd /c",
+          "'call \\\"C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Auxiliary/Build/vcvarsall.bat\\\" x64",
+          "&&",
+          "cmake -B build --preset=windows-nmake-x64'",
+        ],
+      },
+      "options": {
+        "env": {
+          "CMAKE_BUILD_TYPE": "Debug"
+        }
+      },
+      "icon": {
+        "color": "terminal.ansiYellow",
+        "id": "bug"
+      },
+      "group": "build",
     },
     {
       "label": "生成当前 test",
       "type": "shell",
       "dependsOrder": "sequence",
       "dependsOn": "生成 Debug 构建",
-      "command": ["cmake --build build --target ${fileBasenameNoExtension} -v"]
+      "linux": {
+        "command": [
+          "cmake --build build --target ${fileBasenameNoExtension} -v"
+        ]
+      },
+      "windows": {
+        "command": [
+          "cmd /c",
+          "'call \\\"C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Auxiliary/Build/vcvarsall.bat\\\" x64",
+          "&&",
+          "cmake --build build --target ${fileBasenameNoExtension}' ;",
+          "cmd /c 'rmdir /s /q build\\tests\\CMakeFiles\\${fileBasenameNoExtension}.dir'",
+        ],
+        "problemMatcher": [
+          {
+            "owner": "cpp",
+            "fileLocation": [
+              "autoDetect",
+              "${workspaceFolder}"
+            ],
+            "pattern": [
+              {
+                "regexp": "^(.*?)\\((\\d+)\\):\\s+(error|warning)\\s+C(\\d+):\\s+(.*)$",
+                "file": 1,
+                "line": 2,
+                "severity": 3,
+                "code": 4,
+                "message": 5,
+                "loop": true
+              }
+            ]
+          }
+        ]
+      },
+      "icon": {
+        "color": "terminal.ansiYellow",
+        "id": "smiley"
+      },
+      "group": "build",
     },
     {
       "label": "生成 tshark_server",
       "type": "shell",
       "dependsOrder": "sequence",
       "dependsOn": "生成 Debug 构建",
-      "command": ["cmake --build build --target tshark_server -v"]
+      "linux": {
+        "command": [
+          "cmake --build build --target tshark_server -v"
+        ],
+      },
+      "windows": {
+        "command": [
+          "cmd /c",
+          "'call \\\"C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Auxiliary/Build/vcvarsall.bat\\\" x64",
+          "&&",
+          "cmake --build build --target tshark_server'"
+        ],
+        "problemMatcher": [
+          {
+            "owner": "cpp",
+            "fileLocation": [
+              "autoDetect",
+              "${workspaceFolder}"
+            ],
+            "pattern": [
+              {
+                "regexp": "^(.*?)\\((\\d+)\\):\\s+(error|warning)\\s+C(\\d+):\\s+(.*)$",
+                "file": 1,
+                "line": 2,
+                "severity": 3,
+                "code": 4,
+                "message": 5,
+                "loop": true
+              }
+            ]
+          }
+        ]
+      },
+      "icon": {
+        "color": "terminal.ansiYellow",
+        "id": "smiley"
+      },
+      "group": "build",
     }
   ]
 }

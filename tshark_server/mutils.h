@@ -21,6 +21,7 @@
  */
 
 #pragma once
+#include "mutils.h"
 #include "rapidjson/document.h"
 #include "rapidjson/prettywriter.h"
 #include "rapidjson/stringbuffer.h"
@@ -36,28 +37,41 @@
 #include <memory>
 #include <optional>
 #include <queue>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
 #include <xdb_search.h>
 
-inline std::string const utils_exec_cmd(std::string const &cmd) {
-    std::string out;
-    FILE *pipe = popen(cmd.c_str(), "r");
-    if (!pipe) {
-        return out;
-    }
+#ifdef _WIN32
+#include <windows.h>
+inline class {
+    const bool WIN_UTF8 = []() -> bool {
+        return SetConsoleOutputCP(65001);
+    }();
+} WIN_UTF8;
+#else
+inline class {
+} WIN_UTF8;
+#endif
 
-    char buf[4096];
-    size_t len;
-    while (true) {
-        len = fread(buf, 1, sizeof(buf), pipe);
-        if (len <= 0) break;
-        out.append(buf, len);
-    }
-    pclose(pipe);
-    return out;
-}
+// inline std::string const utils_exec_cmd(std::string const &cmd) {
+//     std::string out;
+//     FILE *pipe = popen(cmd.c_str(), "r");
+//     if (!pipe) {
+//         return out;
+//     }
+
+//     char buf[4096];
+//     size_t len;
+//     while (true) {
+//         len = fread(buf, 1, sizeof(buf), pipe);
+//         if (len <= 0) break;
+//         out.append(buf, len);
+//     }
+//     pclose(pipe);
+//     return out;
+// }
 
 inline std::string const utils_data_to_hex(std::vector<char> const &data) {
     std::string ret;

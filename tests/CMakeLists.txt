@@ -9,6 +9,7 @@ foreach(TEST_UNIT ${TEST_SRC})
     add_executable(${TEST_UNIT_TARGET} ${TEST_UNIT})
 
     get_target_property(TEST_INCLUDE tshark_server INCLUDE_DIRECTORIES)
+    get_target_property(TEST_LIBS tshark_server INTERFACE_LINK_LIBRARIES)
     target_include_directories(${TEST_UNIT_TARGET} PRIVATE ${TEST_INCLUDE})
-    target_link_libraries(${TEST_UNIT_TARGET} ${THIRD_LIST})
+    target_link_libraries(${TEST_UNIT_TARGET} ${TEST_LIBS})
 endforeach()
