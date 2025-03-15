@@ -122,17 +122,10 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
     volatile size_t r_pos, w_pos;
     bool eof_f = false;
 #ifdef _WIN32
+    static const HANDLE hNull;
     // 子进程句柄
     HANDLE hProcess = nullptr;
     HANDLE hThread = nullptr;
-    // HANDLE hChildStdoutWr = nullptr;
-    // HANDLE hChildStdinRd = nullptr;
-    // HANDLE hChildStdoutRd = nullptr;
-    // HANDLE hChildStdinWr = nullptr;
-    // HANDLE hChildStd_OUT_Rd = nullptr;
-    // HANDLE hChildStd_OUT_Wr = nullptr;
-    // HANDLE hChildStd_IN_Rd = nullptr;
-    // HANDLE hChildStd_IN_Wr = nullptr;
     HANDLE hReadPipeOut = nullptr, hWritePipeOut = nullptr; // 子进程输出管道
     HANDLE hReadPipeIn = nullptr, hWritePipeIn = nullptr;   // 子进程输入管道
 
@@ -198,7 +191,7 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
         }
     }
     // 规范化命令行
-    std::string normalize(std::string cmd) {
+    std::string normalize(std::string cmd, std::string pl) {
         std::istringstream iss(cmd);
         std::string token;
         std::string normalizedCmd;
@@ -253,7 +246,7 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
                     normalizedCmd += "\"" + token + "\"";
                 }
                 else {
-                    if (token == "-") {
+                    if (token == pl) {
                         GenerateUniquePipeName();
                         token = npipe_name;
                     }
@@ -268,17 +261,19 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
     UniStreamDualPipeU() {}
 
     public:
-    UniStreamDualPipeU(const std::string &command) : r_pos(0), w_pos(0) {
+    UniStreamDualPipeU(
+        const std::string &command, std::string np_placeholder = "")
+        : r_pos(0), w_pos(0) {
 #ifdef _WIN32
         npipe_name.clear();
         npipe_con = false;
-        std::string cmd = normalize(command);
+        std::string cmd = normalize(command, np_placeholder);
         SECURITY_ATTRIBUTES saAttr;
         saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
         saAttr.bInheritHandle = TRUE; // 管道句柄可继承
         saAttr.lpSecurityDescriptor = nullptr;
 
-        std::cout << cmd << std::endl;
+        // std::cout << cmd << std::endl;
         // 子进程输出
         if (!CreatePipe(&hReadPipeOut, &hWritePipeOut, &saAttr, 0)) {
             throw std::runtime_error("Failed to create stdout pipe");
@@ -315,7 +310,7 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
 
         ZeroMemory(&si, sizeof(si));
         si.cb = sizeof(si);
-        si.hStdError = hWritePipeOut;
+        si.hStdError = hNull; // hWritePipeOut;
         si.hStdOutput = hWritePipeOut;
         if (npipe_name.empty()) si.hStdInput = hReadPipeIn;
         si.dwFlags |= STARTF_USESTDHANDLES;
@@ -577,6 +572,13 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
         return w_pos;
     }
 };
+
+#ifdef WIN32
+inline const HANDLE UniStreamDualPipeU::hNull = ([]() -> HANDLE {
+    return CreateFile(
+        "NUL", GENERIC_WRITE, FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+})();
+#endif
 
 /**
  * @brief 一个对象只能单独读或单独写

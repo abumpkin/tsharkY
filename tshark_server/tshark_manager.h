@@ -606,7 +606,7 @@ class TSharkManager {
 
     public:
     TSharkManager() {
-        db = TsharkDB::connect("dump_data/temp.db3");
+        db = TsharkDB::connect("test_data/temp.db3");
     }
 
     std::future<bool> capture_start(

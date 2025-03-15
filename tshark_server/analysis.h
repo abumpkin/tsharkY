@@ -32,7 +32,7 @@ struct Analyzer {
     static std::unique_ptr<PacketDefineDecode> packet_detail(
         std::shared_ptr<Packet> pkt) {
         std::string cmd = TSHARK_PATH " -Q -l -i - -T pdml";
-        UniStreamDualPipeU analyzer{cmd};
+        UniStreamDualPipeU analyzer{cmd, "-"};
         std::unique_ptr<PacketDefineDecode> dec;
         analyzer.write(pkt->fixed->data(), pkt->fixed->size());
         if (pkt->data) analyzer.write(pkt->data->data(), pkt->data->size());

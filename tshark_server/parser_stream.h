@@ -81,7 +81,7 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
     PacketHandler handler;
 
     protected:
-    ParserStreamPacket(std::string const &cmd) : UniStreamDualPipeU(cmd) {}
+    ParserStreamPacket(std::string const &cmd) : UniStreamDualPipeU(cmd, "-") {}
 
     public:
     ParserStreamPacket(PacketHandler handler = nullptr) : stop_ctl(false) {
@@ -273,7 +273,7 @@ struct ParserStreamPacketDetail : ParserStream, UniStreamDualPipeU {
     PacketHandler handler;
 
     ParserStreamPacketDetail(std::string const &cmd)
-        : UniStreamDualPipeU(cmd) {}
+        : UniStreamDualPipeU(cmd, "-") {}
     ParserStreamPacketDetail(PacketHandler handler = nullptr)
         : packets_pending(0), stop_ctl(false) {
         std::string cmd = TSHARK_PATH " -Q -l -i - -T pdml";

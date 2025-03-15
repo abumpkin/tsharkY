@@ -225,7 +225,8 @@ struct Controller : public oatpp::web::server::api::ApiController {
         ENDPOINT_ASYNC_INIT(capture_start);
         std::future<bool> res;
         Action act() override {
-            std::string ifname = request->getQueryParameter("if", "");
+            std::string ifname =
+                utils_url_decode(request->getQueryParameter("if", ""));
             auto ret = DTO_Base::createShared();
             if (!res.valid() && !m.capture_is_running())
                 res = m.capture_start(ifname);
@@ -424,7 +425,7 @@ class AppComponent {
         std::shared_ptr<oatpp::network::ServerConnectionProvider>,
         connection_provider)([] {
         return oatpp::network::tcp::server::ConnectionProvider::createShared(
-            {"localhost", 8000, oatpp::network::Address::IP_4});
+            {"127.0.0.1", 8080});
     }());
     OATPP_CREATE_COMPONENT(
         std::shared_ptr<oatpp::web::server::HttpRouter>, httpRouter)([] {

@@ -38,7 +38,7 @@
             "console": "integratedTerminal",
             "requireExactSource": true,
             "stopAtEntry": false,
-            "preLaunchTask": "生成 tshark_servert",
+            "preLaunchTask": "生成 tshark_server",
         },
         {
             "type": "lldb-dap",
