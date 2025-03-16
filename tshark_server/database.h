@@ -537,6 +537,7 @@ struct TsharkDB {
     }
 
     static std::shared_ptr<TsharkDB> connect(std::string const &path) {
+        utils_path_parent_mkdirs(path);
         auto ret = std::make_shared<TsharkDB>(TsharkDB(path));
         if (ret->db) {
             ret->table_fixed = std::make_unique<TableFixed>(ret.get());

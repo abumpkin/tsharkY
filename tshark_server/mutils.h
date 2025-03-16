@@ -38,6 +38,7 @@
 #include <optional>
 #include <queue>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -51,11 +52,11 @@ inline class {
     }();
 } WIN_UTF8;
 
-inline std::string utils_exec_cmd(const std::string& cmd) {
+inline std::string utils_exec_cmd(const std::string &cmd) {
     std::string out;
 
     // 使用 _popen 并采用二进制读取模式
-    FILE* pipe = _popen(cmd.c_str(), "rb");
+    FILE *pipe = _popen(cmd.c_str(), "rb");
     if (!pipe) {
         return out; // 返回空字符串表示失败
     }
@@ -93,7 +94,6 @@ inline std::string const utils_exec_cmd(std::string const &cmd) {
     return out;
 }
 #endif
-
 
 inline std::string const utils_data_to_hex(std::vector<char> const &data) {
     std::string ret;
@@ -174,9 +174,14 @@ inline void utils_erase_elements(E<T> &obj, T const &e) {
 }
 
 inline std::string const utils_ip2region(std::string ip) {
+    static const char *db[] = {
+        "resources/ip2region.xdb", "3rd/ip2region/data/ip2region.xdb"};
     std::string ret;
-    static xdb_search_t searcher =
-        xdb_search_t("3rd/ip2region/data/ip2region.xdb");
+    static xdb_search_t searcher = []() -> xdb_search_t {
+        if (std::filesystem::exists(db[0])) return xdb_search_t(db[0]);
+        if (std::filesystem::exists(db[1])) return xdb_search_t(db[1]);
+        throw std::runtime_error("could not open resources/ip2region.xdb!");
+    }();
     ret = searcher.search(ip);
     if (ret.find("invalid") != std::string::npos) return "";
     if (ret.find("内网") != std::string::npos) return "内网";
@@ -193,6 +198,13 @@ inline std::filesystem::path utils_test_valid_filename(
     if (std::filesystem::is_directory(test))
         return ""; // 如果是目录，返回空字符串
     return test;   // 否则返回文件路径
+}
+
+inline std::filesystem::path utils_path_parent_mkdirs(
+    std::filesystem::path path) {
+    path = path.parent_path();
+    std::filesystem::create_directories(path);
+    return path;
 }
 
 inline std::string utils_to_json(

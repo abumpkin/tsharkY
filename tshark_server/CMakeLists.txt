@@ -20,3 +20,25 @@ if (WIN32)
         Rpcrt4.lib
     )
 endif()
+
+# 资源文件路径
+set(RESOURCE_FILES
+    ${CMAKE_SOURCE_DIR}/3rd/ip2region/data/ip2region.xdb
+)
+
+# 目标输出目录
+set(TARGET_OUTPUT_DIR ${PROJECT_BINARY_DIR}/resources)
+
+function(CreateResFiles)
+    # 创建目标输出目录
+    file(MAKE_DIRECTORY ${TARGET_OUTPUT_DIR})
+    foreach(X IN ITEMS ${RESOURCE_FILES})
+        get_filename_component(FILE_NAME "${X}" NAME)
+        if(NOT EXISTS "${TARGET_OUTPUT_DIR}/${FILE_NAME}")
+            message(STATUS "File not exists!")
+            file(COPY "${X}" DESTINATION "${TARGET_OUTPUT_DIR}")
+        endif()
+    endforeach()
+endfunction()
+
+CreateResFiles()

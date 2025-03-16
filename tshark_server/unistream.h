@@ -168,11 +168,6 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
 
             std::string name = "\\\\.\\pipe\\" + std::string(str).substr(0, 8);
             RpcStringFree((RPC_CSTR *)&str);
-
-            // 去除大括号
-            if (name.size() >= 2 && name[0] == L'{' && name.back() == L'}') {
-                name = name.substr(1, name.size() - 2);
-            }
             npipe_name = name;
         } while (!is_pipe_available());
     }
