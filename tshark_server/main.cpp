@@ -373,17 +373,30 @@ struct Controller : public oatpp::web::server::api::ApiController {
             auto ret = DTO_Data::createShared();
             ret->code = ret->FAILURE;
             ret->msg = "获取失败";
-            auto session_analyzer = m.get_session_analyzer();
-            if (!session_analyzer)
+            std::unordered_map<std::string, std::string> params;
+            try {
+                for (auto &i : request->getQueryParameters().getAll()) {
+                    params[utils_url_decode(i.first.std_str())] =
+                        utils_url_decode(i.second.std_str());
+                }
+            }
+            catch (...) {
                 return _return(
                     controller->createDtoResponse(Status::CODE_400, ret));
-
-            if (!session_analyzer->sessions.empty()) {
+            }
+            auto sessions = m.capture_get_sessions(params);
+            rapidjson::Value data_obj;
+            rapidjson::MemoryPoolAllocator<> alloc;
+            data_obj.SetArray();
+            for (auto &i : *sessions) {
+                data_obj.PushBack(i->to_json_obj(alloc), alloc);
+            }
+            if (!sessions->empty()) {
+                ret->size = sessions->size();
                 ret->data =
-                    std::make_shared<std::string>(session_analyzer->to_json());
+                    std::make_shared<std::string>(utils_to_json(data_obj));
                 ret->code = ret->SUCCESS;
                 ret->msg = "获取成功";
-                ret->size = session_analyzer->sessions.size();
             }
             auto res = controller->createDtoResponse(Status::CODE_200, ret);
             return _return(res);

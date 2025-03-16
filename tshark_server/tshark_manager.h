@@ -600,9 +600,15 @@ class TSharkManager {
                 db->table_fixed->save(capture_thread.loader->fixed_data,
                     capture_thread.loader->get_format());
             }
+            if (e == SharkLoader::E_LOAD_COMPLETE) {
+                db->start_transaction();
+                for (auto &i : session_analyzer->sessions) {
+                    db->table_session->insert(i);
+                }
+                db->commit_transaction();
+            }
         };
     }
-
 
     public:
     TSharkManager() {
@@ -653,6 +659,12 @@ class TSharkManager {
         if (!p) return "";
         std::unique_ptr<PacketDefineDecode> dec = Analyzer::packet_detail(p);
         return dec->to_json();
+    }
+
+    std::unique_ptr<std::vector<std::shared_ptr<Session>>> capture_get_sessions(
+        std::unordered_map<std::string, std::string> const &params) {
+        return std::make_unique<std::vector<std::shared_ptr<Session>>>(
+            db->table_session->select(params));
     }
 
     std::future<std::vector<IfaceInfo>> interfaces_get_info() {
@@ -712,9 +724,5 @@ class TSharkManager {
     std::unordered_map<std::string, uint32_t>
     interfaces_activity_monitor_read() {
         return statistics_thread.read();
-    }
-
-    std::shared_ptr<Analyzer::SessionAnalyzer> get_session_analyzer() const {
-        return session_analyzer;
     }
 };

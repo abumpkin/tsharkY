@@ -318,6 +318,7 @@ struct PacketDefineDecode : TsharkDataObj<PacketDefineDecode> {
 
 struct Packet : TsharkDataObj<Packet> {
     enum IP_PROTO_CODE : uint8_t {
+        UNKNOWN = 0,
         ICMP = 1,
         IGMP = 2,
         TCP = 6,
@@ -339,6 +340,17 @@ struct Packet : TsharkDataObj<Packet> {
             return ipProtoMap.find(code)->second;
         }
         return nullptr;
+    }
+
+    inline static IP_PROTO_CODE get_ip_proto_code(const char *code) {
+        static const std::unordered_map<std::string, IP_PROTO_CODE>
+            ipProtoMap = {{"ICMP", ICMP}, {"IGMP", IGMP}, {"TCP", TCP},
+                {"UDP", UDP}, {"GRE", GRE}, {"ESP", ESP}, {"AH", AH},
+                {"EIGRP", EIGRP}, {"OSPF", OSPF}, {"SCTP", SCTP}};
+        if (ipProtoMap.count(code)) {
+            return ipProtoMap.find(code)->second;
+        }
+        return UNKNOWN;
     }
 
     uint32_t idx;
@@ -409,18 +421,21 @@ struct Session {
     double start_time;
     double end_time;
     std::string app_proto;
-    uint32_t ip1_send_packets_count; // ip1发送的数据包数
-    uint32_t ip1_send_bytes_count;   // ip1发送的字节数
-    uint32_t ip2_send_packets_count; // ip2发送的数据包数
-    uint32_t ip2_send_bytes_count;   // ip2发送的字节数
-    uint32_t packet_count;           // 数据包数量
-    uint32_t total_bytes;            // 总字节数、
+    uint32_t ip1_send_packets; // ip1发送的数据包数
+    uint32_t ip2_send_packets; // ip2发送的数据包数
+    uint32_t ip1_send_bytes;   // ip1发送的字节数
+    uint32_t ip2_send_bytes;   // ip2发送的字节数
+    uint32_t packet_count;     // 数据包数量
+    uint32_t total_bytes;      // 总字节数、
 
     private:
     Session() = default;
 
     public:
     static std::shared_ptr<Session> create(Packet &packet);
+    static std::shared_ptr<Session> create() {
+        return std::make_shared<Session>(Session());
+    }
 
     void update(Packet &packet) {
         packet.sess_idx = session_id;
@@ -429,12 +444,12 @@ struct Session {
             app_proto = packet.frame_protocol;
         }
         if (ip1 == packet.src_ip) {
-            ip1_send_packets_count++;
-            ip1_send_bytes_count += packet.cap_len;
+            ip1_send_packets++;
+            ip1_send_bytes += packet.cap_len;
         }
         else {
-            ip2_send_packets_count++;
-            ip2_send_bytes_count += packet.cap_len;
+            ip2_send_packets++;
+            ip2_send_bytes += packet.cap_len;
         }
         packet_count++;
         total_bytes += packet.cap_len;
@@ -464,12 +479,10 @@ struct Session {
         ret.AddMember("end_time", end_time, allocator);
         ret.AddMember("app_proto",
             rapidjson::Value(app_proto.c_str(), app_proto.size()), allocator);
-        ret.AddMember(
-            "ip1_send_packets_count", ip1_send_packets_count, allocator);
-        ret.AddMember("ip1_send_bytes_count", ip1_send_bytes_count, allocator);
-        ret.AddMember(
-            "ip2_send_packets_count", ip2_send_packets_count, allocator);
-        ret.AddMember("ip2_send_bytes_count", ip2_send_bytes_count, allocator);
+        ret.AddMember("ip1_send_packets_count", ip1_send_packets, allocator);
+        ret.AddMember("ip1_send_bytes_count", ip1_send_bytes, allocator);
+        ret.AddMember("ip2_send_packets_count", ip2_send_packets, allocator);
+        ret.AddMember("ip2_send_bytes_count", ip2_send_bytes, allocator);
         ret.AddMember("packet_count", packet_count, allocator);
         ret.AddMember("total_bytes", total_bytes, allocator);
         return ret;

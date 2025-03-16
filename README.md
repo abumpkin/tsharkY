@@ -15,7 +15,7 @@ tshark 是抓包软件 wireshark 的一个命令行抓包程序，使用 tshark 
 git clone https://github.com/abumpkin/tsharkY.git
 cd tsharkY
 # 拉取子模块
-git update --init
+git submodule update --init
 ```
 
 ### Linux

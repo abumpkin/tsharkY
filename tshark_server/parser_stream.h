@@ -25,7 +25,6 @@
 #include "streambuf.h"
 #include "tshark_info.h"
 #include "unistream.h"
-#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <cstdint>
