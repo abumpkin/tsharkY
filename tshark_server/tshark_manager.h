@@ -29,6 +29,7 @@
 #include "tshark_info.h"
 #include "unistream.h"
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
@@ -109,6 +110,10 @@ struct SharkLoader {
     virtual void set_notify(LoaderEvent func) {
         notify = func;
     }
+
+    ~SharkLoader() {
+        if (!parser_stream->eof()) LOG_F(WARNING, "SharkLoader Exit bug.");
+    }
 };
 
 struct SharkPcapngLoader : SharkLoader {
@@ -166,10 +171,10 @@ struct SharkPcapngLoader : SharkLoader {
             using namespace std::chrono_literals;
             rd_len = 0;
             t = 0;
-            while (
-                !stop_ctl && !bin_stream->eof() && rd_len < sizeof(section)) {
+            while (!stop_ctl && !bin_stream->eof() &&
+                   rd_len < sizeof(GeneralHeader)) {
                 t = bin_stream->read_ub(
-                    p_section + rd_len, sizeof(section) - rd_len);
+                    p_section + rd_len, sizeof(GeneralHeader) - rd_len);
                 rd_len += t;
                 if (!t) std::this_thread::sleep_for(1ms);
             }
@@ -245,6 +250,9 @@ struct SharkPcapngLoader : SharkLoader {
             }
             LOG_F(INFO, "block type: %X", section.block_type);
 
+            if (section.block_length < sizeof(GeneralHeader)) {
+                LOG_F(ERROR, "something wrong!!!!");
+            }
             rd_len = bin_stream->read_to_null(
                 section.block_length - sizeof(GeneralHeader));
             if (!rd_len) {
@@ -252,11 +260,11 @@ struct SharkPcapngLoader : SharkLoader {
                 break;
             }
         }
-        if (notify) notify(E_LOAD_COMPLETE);
         for (auto const &i : parsers) {
             i->wait_done();
         }
         close_streams();
+        if (notify) notify(E_LOAD_COMPLETE);
         return ret;
     }
 };
@@ -352,11 +360,11 @@ struct SharkPcapLoader : SharkLoader {
                 break;
             }
         }
-        if (notify) notify(E_LOAD_COMPLETE);
         for (auto const &i : parsers) {
             i->wait_done();
         }
         close_streams();
+        if (notify) notify(E_LOAD_COMPLETE);
         return ret;
     }
 };
@@ -567,12 +575,18 @@ class TSharkManager {
     // 会话分析器
     std::shared_ptr<Analyzer::SessionAnalyzer> session_analyzer;
 
+    std::chrono::high_resolution_clock::time_point start_time;
+    uint32_t speed = 0, total = 0;
+
     // 重建解析器
     void recreate_ps() {
+        total = 0;
         // 重建会话分析器
         session_analyzer = Analyzer::SessionAnalyzer::create();
+
         // 重建数据库
         db->recreate();
+        start_time = std::chrono::high_resolution_clock::now();
         // 包解析结果处理函数
         auto handler = [&](std::shared_ptr<Packet> p,
                            ParserStreamPacket::Status st) {
@@ -588,21 +602,31 @@ class TSharkManager {
                 if (!db->has_transaction()) db->start_transaction();
                 // 插入数据到数据库
                 db->table_brief->insert(p);
-                // LOG_F(INFO, "usecount: %zu %zu", p.use_count(),
+
+                speed++;
+                if (std::chrono::high_resolution_clock::now() - start_time >
+                    std::chrono::seconds(1)) {
+                    total += speed;
+                    start_time = std::chrono::high_resolution_clock::now();
+                    LOG_F(INFO, "speed: %dpkt/s  buf: %ld/%d  total: %d", speed,
+                        p->fixed.use_count() - 4, ParserStreamPacket::MAX_QUEUE,
+                        total);
+                    speed = 0;
+                }
             }
         };
         ps = std::make_shared<ParserStreamPacket>(handler);
     }
 
     SharkLoader::LoaderEvent create_loader_event() {
-        return [&](SharkLoader::Event e) {
+        return [this](SharkLoader::Event e) {
             if (e == SharkLoader::E_FIXED_UPDATE) {
                 db->table_fixed->save(capture_thread.loader->fixed_data,
                     capture_thread.loader->get_format());
             }
             if (e == SharkLoader::E_LOAD_COMPLETE) {
                 db->start_transaction();
-                for (auto &i : session_analyzer->sessions) {
+                for (auto &i : *session_analyzer->get_sessions()) {
                     db->table_session->insert(i);
                 }
                 db->commit_transaction();
@@ -632,7 +656,8 @@ class TSharkManager {
 
     std::future<bool> capture_from_file(std::filesystem::path path) {
         recreate_ps();
-        capture_thread.set_load_event(create_loader_event());
+        auto le = create_loader_event();
+        capture_thread.set_load_event(le);
         return std::async(std::launch::async, [=]() {
             return capture_thread.load_capture_file(path, {ps});
         });

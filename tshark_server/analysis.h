@@ -21,10 +21,14 @@
  */
 
 #pragma once
+#include "mutils.h"
 #include "rapidjson/document.h"
 #include "tshark_info.h"
 #include "unistream.h"
 #include <memory>
+#include <mutex>
+#include <shared_mutex>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -51,12 +55,19 @@ struct Analyzer {
     }
 
     struct SessionAnalyzer : TsharkDataObj<SessionAnalyzer> {
-        std::unordered_set<std::shared_ptr<Session>> sessions;
-
         private:
-        SessionAnalyzer() = default;
+        std::shared_mutex mt;
+        std::shared_ptr<std::unordered_set<std::shared_ptr<Session>>> sessions;
+        SessionAnalyzer() {
+            sessions = std::make_shared<
+                std::unordered_set<std::shared_ptr<Session>>>();
+        }
 
         public:
+        SessionAnalyzer(SessionAnalyzer &&t) {
+            sessions = std::move(t.sessions);
+        }
+
         static std::shared_ptr<SessionAnalyzer> create() {
             return std::make_shared<SessionAnalyzer>(SessionAnalyzer());
         }
@@ -64,14 +75,15 @@ struct Analyzer {
         void check_packet(Packet &packet) {
             if (packet.ip_proto_code == Packet::TCP ||
                 packet.ip_proto_code == Packet::UDP) {
+                std::unique_lock<std::shared_mutex> lock(mt);
                 auto sess = Session::create(packet);
-                if (sessions.count(sess)) {
-                    sessions.find(sess)->get()->update(packet);
+                if (sessions->count(sess)) {
+                    sessions->find(sess)->get()->update(packet);
                 }
                 else {
-                    sess->session_id = sessions.size();
+                    sess->session_id = sessions->size();
                     sess->update(packet);
-                    sessions.emplace(sess);
+                    sessions->emplace(sess);
                 }
             }
         }
@@ -80,10 +92,15 @@ struct Analyzer {
             rapidjson::MemoryPoolAllocator<> &allocator) const {
             rapidjson::Value ret;
             ret.SetArray();
-            for (auto &i : sessions) {
+            for (auto &i : *sessions) {
                 ret.PushBack(i->to_json_obj(allocator), allocator);
             }
             return ret;
+        }
+
+        ProtectedObj<std::unordered_set<std::shared_ptr<Session>>>
+        get_sessions() {
+            return ProtectedObj(sessions, mt);
         }
     };
 };

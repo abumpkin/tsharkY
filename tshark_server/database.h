@@ -105,9 +105,7 @@ struct TsharkDB {
         const char *get_table_name() const {
             return name;
         }
-        TableBase(TsharkDB *con, const char *name) : con(con), name(name) {
-            LOG_F(WARNING, "con = %p", con);
-        };
+        TableBase(TsharkDB *con, const char *name) : con(con), name(name) {};
         TableBase(TableBase &) = delete;
         TableBase(TableBase &&) = delete;
         TableBase &operator=(TableBase &) = delete;
@@ -253,6 +251,10 @@ struct TsharkDB {
                 {14, "cap_len", "INTEGER"};
             const TableField data = //
                 {15, "data", "BLOB"};
+            const TableField session_id = //
+                {16, "session_id",
+                    "INTEGER REFERENCES packet_table(idx) ON DELETE CASCADE ON "
+                    "UPDATE CASCADE"};
         } Fields;
         std::unique_ptr<SQLite::Statement> stat_insert;
         std::unique_ptr<SQLite::Statement> stat_delete;
@@ -280,6 +282,7 @@ struct TsharkDB {
             p->dst_port = stat.getColumn(Fields.dst_port).getUInt();
             p->cap_off = stat.getColumn(Fields.cap_off).getUInt();
             p->cap_len = stat.getColumn(Fields.cap_len).getUInt();
+            p->cap_len = stat.getColumn(Fields.session_id).getUInt();
             auto data_col = stat.getColumn(Fields.data);
             p->data = std::make_unique<std::vector<char>>(
                 static_cast<const char *>(data_col.getBlob()),
@@ -295,7 +298,7 @@ struct TsharkDB {
             TsharkDB::ProtectedDB db = con->get_db();
             std::string sql = R"(
             INSERT OR REPLACE INTO {} VALUES (
-                :{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{}
+                :{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{}, :{}
             )
             )";
             sql = fmt::format(sql, name,     //
@@ -313,7 +316,8 @@ struct TsharkDB {
                 (int)Fields.dst_port,        //
                 (int)Fields.cap_off,         //
                 (int)Fields.cap_len,         //
-                (int)Fields.data             //
+                (int)Fields.data,            //
+                (int)Fields.session_id       //
             );
             stat_insert = std::make_unique<SQLite::Statement>(*db, sql);
             sql = R"(
@@ -438,6 +442,7 @@ struct TsharkDB {
                 stat_insert->bind((int)Fields.dst_port, p->dst_port);
                 stat_insert->bind((int)Fields.cap_off, p->cap_off);
                 stat_insert->bind((int)Fields.cap_len, p->cap_len);
+                stat_insert->bind((int)Fields.session_id, p->sess_idx);
                 stat_insert->bind((int)Fields.data);
                 if (p->data)
                     stat_insert->bindNoCopy(

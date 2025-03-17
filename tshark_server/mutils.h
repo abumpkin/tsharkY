@@ -21,7 +21,6 @@
  */
 
 #pragma once
-#include "mutils.h"
 #include "rapidjson/document.h"
 #include "rapidjson/prettywriter.h"
 #include "rapidjson/stringbuffer.h"
@@ -34,9 +33,11 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <loguru.hpp>
 #include <memory>
 #include <optional>
 #include <queue>
+#include <shared_mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -177,12 +178,18 @@ inline std::string const utils_ip2region(std::string ip) {
     static const char *db[] = {
         "resources/ip2region.xdb", "3rd/ip2region/data/ip2region.xdb"};
     std::string ret;
-    static xdb_search_t searcher = []() -> xdb_search_t {
-        if (std::filesystem::exists(db[0])) return xdb_search_t(db[0]);
-        if (std::filesystem::exists(db[1])) return xdb_search_t(db[1]);
-        throw std::runtime_error("could not open resources/ip2region.xdb!");
+    static std::unique_ptr<xdb_search_t> searcher = []() {
+        const char *path = nullptr;
+        if (std::filesystem::exists(db[0])) path = db[0];
+        if (std::filesystem::exists(db[1])) path = db[1];
+        if (!path)
+            throw std::runtime_error("could not open resources/ip2region.xdb!");
+        LOG_F(INFO, "Ip Region Data: Load from file %s", path);
+        auto xdb = std::make_unique<xdb_search_t>(path);
+        xdb->init_content();
+        return std::move(xdb);
     }();
-    ret = searcher.search(ip);
+    ret = searcher->search(ip);
     if (ret.find("invalid") != std::string::npos) return "";
     if (ret.find("内网") != std::string::npos) return "内网";
     ret = utils_replace_str_all(ret, "0", "");
@@ -552,3 +559,18 @@ inline std::string utils_sql_fuzz_escape(const std::string &input) {
     }
     return result;
 }
+
+template <typename T>
+struct ProtectedObj : std::shared_lock<std::shared_mutex> {
+    std::shared_ptr<T> p;
+    ProtectedObj(std::shared_ptr<T> p, std::shared_mutex &mt)
+        : std::shared_lock<std::shared_mutex>(mt) {
+        this->p = p;
+    }
+    T *operator->() {
+        return p.get();
+    }
+    T &operator*() {
+        return *p;
+    }
+};

@@ -70,7 +70,7 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
     constexpr static const uint32_t CMD_FIELD_NUM =
         sizeof(CMD_Fields) / sizeof(char const *);
     using PacketHandler = std::function<void(std::shared_ptr<Packet>, Status)>;
-    const uint32_t MAX_QUEUE = 65535;
+    static const uint32_t MAX_QUEUE = 65535;
     std::weak_ptr<std::vector<char>> fixed;
     std::queue<std::shared_ptr<Packet>> packets_pending;
     volatile std::atomic_bool stop_ctl;
@@ -125,6 +125,7 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
         using namespace std::chrono_literals;
         if (p_t) {
             while (packets_pending.size()) {
+                // std::this_thread::yield();
                 std::this_thread::sleep_for(1ms);
             }
         }
@@ -159,7 +160,16 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
                 if (rd_len) buf.write(data, rd_len);
             } while (!p->eof() && rd_len);
         };
+        std::chrono::high_resolution_clock::time_point start_time;
+        double speed = 0;
         while (!p->eof()) {
+            if (std::chrono::high_resolution_clock::now() - start_time >
+                std::chrono::seconds(1)) {
+                start_time = std::chrono::high_resolution_clock::now();
+                LOG_F(INFO, "speed: %.2fKb/s  total: %dkb",
+                    (double)(buf.size() - speed) / 1024, buf.size() / 1024);
+                speed = buf.size();
+            }
             read_some();
             if (p->packets_pending.empty()) {
                 if (p->stop_ctl) break;
@@ -175,7 +185,7 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
                 packet = p->packets_pending.front();
                 p->packets_pending.pop();
             }
-
+            // continue;
             do {
                 read_some();
                 explain = buf.try_read_util('\n');

@@ -21,6 +21,7 @@
  */
 
 #pragma once
+#include "database.h"
 #include "mutils.h"
 #include <csignal>
 #include <cstddef>
@@ -30,10 +31,12 @@
 #include <errhandlingapi.h>
 #include <fstream>
 #include <future>
+#include <handleapi.h>
 #include <ios>
 #include <iostream>
 #include <istream>
 #include <memory>
+#include <minwinbase.h>
 #include <minwindef.h>
 #include <mutils.h>
 #include <namedpipeapi.h>
@@ -122,6 +125,8 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
     volatile size_t r_pos, w_pos;
     bool eof_f = false;
 #ifdef _WIN32
+    OVERLAPPED read_con_ctx;
+    std::unique_ptr<OVERLAPPED> read_read_ctx;
     static const HANDLE hNull;
     // 子进程句柄
     HANDLE hProcess = nullptr;
@@ -130,8 +135,10 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
     HANDLE hReadPipeIn = nullptr, hWritePipeIn = nullptr;   // 子进程输入管道
 
     //
-    std::string npipe_name;
-    bool npipe_con = false;
+    std::string nwpipe_name;
+    std::string nrpipe_name;
+    bool nwpipe_con = false;
+    bool nrpipe_con = false;
     // HANDLE npipe = nullptr;
 
 #else
@@ -142,10 +149,9 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
 
 #ifdef _WIN32
     // 检查管道名称是否可用
-    bool is_pipe_available() {
-        HANDLE hTest =
-            CreateFile(npipe_name.c_str(), GENERIC_READ | GENERIC_WRITE, 0,
-                nullptr, OPEN_EXISTING, 0, nullptr);
+    bool is_pipe_available(std::string pname) {
+        HANDLE hTest = CreateFile(pname.c_str(), GENERIC_READ | GENERIC_WRITE,
+            0, nullptr, OPEN_EXISTING, 0, nullptr);
 
         if (hTest != INVALID_HANDLE_VALUE) {
             CloseHandle(hTest);
@@ -153,8 +159,9 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
         }
         return GetLastError() == ERROR_FILE_NOT_FOUND;
     }
-    void GenerateUniquePipeName() {
+    std::string GenerateUniquePipeName() {
         UUID uuid;
+        std::string name;
         do {
             RPC_STATUS status = UuidCreate(&uuid);
             if (status != RPC_S_OK && status != RPC_S_UUID_LOCAL_ONLY) {
@@ -166,13 +173,13 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
                 throw std::runtime_error("UuidToStringW failed");
             }
 
-            std::string name = "\\\\.\\pipe\\" + std::string(str).substr(0, 8);
+            name = "\\\\.\\pipe\\" + std::string(str).substr(0, 8);
             RpcStringFree((RPC_CSTR *)&str);
-            npipe_name = name;
-        } while (!is_pipe_available());
+        } while (!is_pipe_available(name));
+        return name;
     }
-    void create_pipe() {
-        hWritePipeIn = CreateNamedPipe(npipe_name.c_str(),
+    HANDLE create_wpipe(std::string name) {
+        HANDLE ret = CreateNamedPipe(name.c_str(),
             PIPE_ACCESS_OUTBOUND, // 单向写入模式
             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
             1,    // 最大实例数
@@ -181,10 +188,27 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
             0,    // 默认超时
             nullptr);
 
-        if (hWritePipeIn == INVALID_HANDLE_VALUE) {
+        if (ret == INVALID_HANDLE_VALUE) {
             throw std::runtime_error("Failed to create named pipe");
         }
+        return ret;
     }
+    HANDLE create_rpipe(std::string name) {
+        HANDLE ret = CreateNamedPipe(name.c_str(),
+            PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED, // 异步读模式
+            PIPE_TYPE_BYTE | PIPE_WAIT,
+            1,    // 单实例
+            4096, // 输出缓冲区大小
+            4096, // 输入缓冲区大小
+            0,    // 默认超时
+            NULL  // 默认安全属性
+        );
+        if (ret == INVALID_HANDLE_VALUE) {
+            throw std::runtime_error("Failed to create named pipe");
+        }
+        return ret;
+    }
+
     // 规范化命令行
     std::string normalize(std::string cmd, std::string pl) {
         std::istringstream iss(cmd);
@@ -242,8 +266,8 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
                 }
                 else {
                     if (token == pl) {
-                        GenerateUniquePipeName();
-                        token = npipe_name;
+                        nwpipe_name = GenerateUniquePipeName();
+                        token = nwpipe_name;
                     }
                     normalizedCmd += token;
                 }
@@ -260,8 +284,8 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
         const std::string &command, std::string np_placeholder = "")
         : r_pos(0), w_pos(0) {
 #ifdef _WIN32
-        npipe_name.clear();
-        npipe_con = false;
+        nwpipe_name.clear();
+        nwpipe_con = false;
         std::string cmd = normalize(command, np_placeholder);
         SECURITY_ATTRIBUTES saAttr;
         saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
@@ -270,11 +294,32 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
 
         // std::cout << cmd << std::endl;
         // 子进程输出
-        if (!CreatePipe(&hReadPipeOut, &hWritePipeOut, &saAttr, 0)) {
+        // if (!CreatePipe(&hReadPipeOut, &hWritePipeOut, &saAttr, 0)) {
+        //     throw std::runtime_error("Failed to create stdout pipe");
+        // }
+        ZeroMemory(&read_con_ctx, sizeof(OVERLAPPED));
+        read_con_ctx.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+        nrpipe_con = false;
+        nrpipe_name = GenerateUniquePipeName();
+        hReadPipeOut = create_rpipe(nrpipe_name);
+        hWritePipeOut = CreateFile( //
+            nrpipe_name.c_str(),    //
+            GENERIC_WRITE,          //
+            0,                      //
+            &saAttr,                //
+            OPEN_EXISTING,          //
+            FILE_ATTRIBUTE_NORMAL,  //
+            NULL                    //
+        );
+        if (hWritePipeOut == INVALID_HANDLE_VALUE) {
+            fprintf(stderr, "CreateFile failed, error=%lu\n", GetLastError());
+            CloseHandle(hReadPipeOut);
             throw std::runtime_error("Failed to create stdout pipe");
         }
-        if (!npipe_name.empty()) {
-            create_pipe();
+
+        // 子进程输入
+        if (!nwpipe_name.empty()) {
+            hWritePipeIn = create_wpipe(nwpipe_name);
             // if (!ConnectNamedPipe(hWritePipeIn, nullptr)) {
             //     DWORD error = GetLastError();
             //     if (error != ERROR_PIPE_CONNECTED) {
@@ -286,58 +331,74 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
             // }
         }
         else {
-            // 创建子进程输入管道
             if (!CreatePipe(&hReadPipeIn, &hWritePipeIn, &saAttr, 0)) {
                 throw std::runtime_error("Failed to create stdin pipe");
             }
         }
-
-        // if (!npipe_name.empty() && !npipe_con) {
-        //     if (!ConnectNamedPipe(hWritePipeIn, nullptr)) {
-        //         if (npipe_con) eof_f = true;
-        //     }
-        //     npipe_con = true;
-        // }
 
         // 创建子进程
         STARTUPINFO si;
         PROCESS_INFORMATION pi;
 
         ZeroMemory(&si, sizeof(si));
+        ZeroMemory(&pi, sizeof(pi));
         si.cb = sizeof(si);
         si.hStdError = hNull; // hWritePipeOut;
         si.hStdOutput = hWritePipeOut;
-        if (npipe_name.empty()) si.hStdInput = hReadPipeIn;
+        if (nwpipe_name.empty()) si.hStdInput = hReadPipeIn;
         si.dwFlags |= STARTF_USESTDHANDLES;
         si.wShowWindow = SW_HIDE;
 
-        ZeroMemory(&pi, sizeof(pi));
-
-        // 创建子进程
-        if (!CreateProcess(nullptr,       // 应用程序名称
-                (LPSTR)cmd.c_str(),       // 命令行
-                nullptr,                  // 进程安全属性
-                nullptr,                  // 线程安全属性
-                TRUE,                     // 继承句柄
-                /*CREATE_NEW_CONSOLE*/ 0, // 创建标志
-                nullptr,                  // 环境变量
-                nullptr,                  // 当前目录
-                &si,                      // STARTUPINFO
-                &pi)) {                   // PROCESS_INFORMATION
+        if (!CreateProcess(nullptr,                      // 应用程序名称
+                (LPSTR)cmd.c_str(),                      // 命令行
+                nullptr,                                 // 进程安全属性
+                nullptr,                                 // 线程安全属性
+                TRUE,                                    // 继承句柄
+                /*CREATE_NEW_CONSOLE*/ CREATE_NO_WINDOW, // 创建标志
+                nullptr,                                 // 环境变量
+                nullptr,                                 // 当前目录
+                &si,                                     // STARTUPINFO
+                &pi)) {                                  // PROCESS_INFORMATION
             throw std::runtime_error("Failed to create subprocess");
         }
 
         // 设置读管道为非阻塞模式
-        DWORD dwMode = PIPE_NOWAIT; // 非阻塞模式
-        if (!SetNamedPipeHandleState(hReadPipeOut, &dwMode, nullptr, nullptr)) {
-            throw std::runtime_error("Failed to configure pipe");
-        }
+        // DWORD dwMode = PIPE_NOWAIT; // 非阻塞模式
+        // if (!SetNamedPipeHandleState(hReadPipeOut, &dwMode, nullptr,
+        // nullptr)) {
+        //     throw std::runtime_error("Failed to configure pipe");
+        // }
         // 关闭不需要的句柄
         CloseHandle(hWritePipeOut);
         if (hReadPipeIn) CloseHandle(hReadPipeIn);
 
         hProcess = pi.hProcess;
         hThread = pi.hThread;
+
+        // 等待连接
+        if (!ConnectNamedPipe(hReadPipeOut, &read_con_ctx)) {
+            DWORD err = GetLastError();
+            if (err == ERROR_IO_PENDING) {
+                fprintf(stderr, "ConnectNamedPipe failed, error=%lu\n", err);
+                CloseHandle(hReadPipeOut);
+                throw std::runtime_error("Failed to create subprocess");
+            }
+            else if (err == ERROR_PIPE_CONNECTED) {
+                // 客户端已提前连接，直接标记事件为已触发
+                SetEvent(read_con_ctx.hEvent);
+            }
+            else {
+                // 等待连接完成
+                DWORD waitResult =
+                    WaitForSingleObject(read_con_ctx.hEvent, 10000);
+                if (waitResult != WAIT_OBJECT_0) {
+                    fprintf(stderr, "等待连接失败\n");
+                    CloseHandle(hReadPipeOut);
+                    throw std::runtime_error("Failed to create subprocess");
+                }
+            }
+        }
+        CloseHandle(read_con_ctx.hEvent);
 #else
         // Linux平台
         int stdoutPipe[2];
@@ -410,9 +471,10 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
 
     void terminate() {
 #ifdef _WIN32
-        if (!npipe_name.empty() && hWritePipeIn)
+        if (!nwpipe_name.empty() && hWritePipeIn)
             DisconnectNamedPipe(hWritePipeIn);
         if (hReadPipeOut) {
+            DisconnectNamedPipe(hReadPipeOut);
             CloseHandle(hReadPipeOut);
             hReadPipeOut = nullptr;
         }
@@ -458,30 +520,78 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
 
     virtual uint32_t read_ub(char *buf, uint32_t len) override {
 #ifdef _WIN32
-        DWORD bytesRead;
-        // DWORD bytesAvailable = 0;
-        // if (PeekNamedPipe(hReadPipeOut, NULL, 0, NULL, &bytesAvailable, NULL)
-        // &&
-        //     bytesAvailable > 0) {
-        //     bytesRead = bytesAvailable > len ? len : bytesAvailable;
-        // }
-        if (ReadFile(hReadPipeOut, buf, static_cast<DWORD>(len), &bytesRead,
-                nullptr)) {
-            if (!bytesRead) {
-                eof_f = true;
+        DWORD bytesRead = 0;
+        if (eof_f) return 0;
+        if (!read_read_ctx) {
+            read_read_ctx = std::make_unique<OVERLAPPED>();
+            ZeroMemory(read_read_ctx.get(), sizeof(OVERLAPPED));
+            if (!ReadFile(
+                    hReadPipeOut, buf, len, &bytesRead, read_read_ctx.get())) {
+                DWORD err = GetLastError();
+                if (err == ERROR_IO_PENDING) {
+                    // 等待结果
+                    return 0;
+                }
+                else if (err == ERROR_BROKEN_PIPE) {
+                    // 管道已关闭
+                    eof_f = true;
+                    return 0;
+                }
+                else {
+                    fprintf(stderr, "ReadFile failed, error=%lu\n", err);
+                    eof_f = true;
+                }
             }
-            r_pos += bytesRead;
-            return bytesRead;
+            else {
+                // 立即读取成功
+                read_read_ctx.reset();
+                return bytesRead;
+            }
         }
         else {
-            if (GetLastError() != ERROR_NO_DATA) {
-                // std::cout << "E" << GetLastError() << std::endl;
-                eof_f = true;
+            // 非阻塞检查操作状态
+            BOOL result = GetOverlappedResult(
+                hReadPipeOut, read_read_ctx.get(), &bytesRead, FALSE);
+            DWORD err = GetLastError();
+            if (result) {
+                // 收到数据
+                read_read_ctx.reset();
+                return bytesRead;
             }
-            if (GetLastError() == ERROR_HANDLE_EOF ||
-                GetLastError() == ERROR_BROKEN_PIPE) {}
+            else if (err == ERROR_IO_INCOMPLETE) {
+                // 操作未完成，稍作延迟后继续检查
+                return 0;
+            }
+            else {
+                if (err == ERROR_BROKEN_PIPE) {
+                    // EOF
+                    eof_f = true;
+                }
+                else {
+                    // 读取错误
+                    eof_f = true;
+                }
+            }
         }
         return 0;
+        ////////////////////////////
+        // if (ReadFile(hReadPipeOut, buf, static_cast<DWORD>(len), &bytesRead,
+        //         nullptr)) {
+        //     if (!bytesRead) {
+        //         eof_f = true;
+        //     }
+        //     r_pos += bytesRead;
+        //     return bytesRead;
+        // }
+        // else {
+        //     if (GetLastError() != ERROR_NO_DATA) {
+        //         LOG_F(WARNING, "E: %ld", GetLastError());
+        //         eof_f = true;
+        //     }
+        //     if (GetLastError() == ERROR_HANDLE_EOF ||
+        //         GetLastError() == ERROR_BROKEN_PIPE) {}
+        // }
+        // return 0;
 #else
         size_t ret = ::read(childStdout, buf, len);
         if (!ret) eof_f = true;
@@ -501,18 +611,17 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
 #ifdef _WIN32
         DWORD bytesWritten;
         if (!hWritePipeIn) return 0;
-        if (!npipe_name.empty() && !npipe_con) {
+        if (!nwpipe_name.empty() && !nwpipe_con) {
             if (!ConnectNamedPipe(hWritePipeIn, nullptr)) {
                 // if (npipe_con) eof_f = true;
             }
-            npipe_con = true;
+            nwpipe_con = true;
         }
         if (WriteFile(hWritePipeIn, buf, static_cast<DWORD>(len), &bytesWritten,
                 nullptr)) {
             w_pos += bytesWritten;
             return bytesWritten;
         }
-        std::cout << "E" << GetLastError() << std::endl;
         return 0;
 #else
         size_t ret = ::write(childStdin, buf, len);
@@ -537,7 +646,7 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
 #ifdef _WIN32
         // Windows平台：关闭写入管道的句柄
         if (hWritePipeIn != nullptr) {
-            if (!npipe_name.empty()) {
+            if (!nwpipe_name.empty()) {
                 DisconnectNamedPipe(hWritePipeIn);
             }
             CloseHandle(hWritePipeIn);
