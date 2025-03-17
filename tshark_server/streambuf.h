@@ -21,20 +21,29 @@
  */
 
 #pragma once
+#include "mutils.h"
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
 #include <stack>
 #include <string>
+#include <thread>
+#include <utility>
 #include <vector>
 
-template <size_t SIZE = 4096>
+template <size_t SIZE = 4096, size_t MAX_BLOCK = -1ul>
 class StreamBuf {
     public:
     static constexpr size_t BLOCK_SIZE = SIZE;
+    static constexpr size_t BLOCK_MAX = MAX_BLOCK;
+    uint64_t total_read;
 
     struct Block {
         std::vector<char> data;
@@ -55,31 +64,84 @@ class StreamBuf {
     // 内存池实现
     class BlockPool {
         private:
-        std::stack<Block *> pool;
+        std::stack<Block *> free_pool;
         std::mutex mutex;
 
         public:
         Block *acquire() {
             std::lock_guard<std::mutex> lock(mutex);
-            if (pool.empty()) return new Block();
-            Block *block = pool.top();
-            pool.pop();
+            if (free_pool.empty()) return new Block();
+            Block *block = free_pool.top();
+            free_pool.pop();
             return block;
         }
 
         void release(Block *block) noexcept {
             std::lock_guard<std::mutex> lock(mutex);
             block->reset();
-            pool.push(block);
+            free_pool.push(block);
         }
 
         ~BlockPool() {
-            while (!pool.empty()) {
-                delete pool.top();
-                pool.pop();
+            while (!free_pool.empty()) {
+                delete free_pool.top();
+                free_pool.pop();
             }
         }
     };
+
+    struct DataView {
+        private:
+        StreamBuf *p_buf;
+        Block *block;
+        // BlockPool *pool;
+        std::unique_lock<std::mutex> lock;
+
+        public:
+        char *data;
+        uint64_t len;
+
+        DataView(std::unique_lock<std::mutex> &&lock, StreamBuf *p_buf,
+            Block *block, uint64_t off_, uint64_t len_)
+            : p_buf(p_buf), block(block) {
+            this->lock = std::move(lock);
+            len = 0;
+            if (block) {
+                // block->block_mutex.lock();
+                data = block->data.data() + off_;
+                len = len_;
+            }
+        }
+
+        ~DataView() {
+            if (block) {
+                // block->block_mutex.unlock();
+                block->read_pos += len;
+            }
+            // if (p_buf) {
+            //     if ((block->write_pos - block->read_pos) == 0 &&
+            //         block->write_pos == block->data.size() &&
+            //         p_buf->block_pool) {
+            //         if (p_buf->head.load(std::memory_order_acquire) !=
+            //                 p_buf->tail.load(std::memory_order_acquire) &&
+            //             block->next) {
+            //             p_buf->head.store(
+            //                 block->next, std::memory_order_release);
+            //             if (block->next == nullptr) {
+            //                 std::abort();
+            //             }
+            //             p_buf->block_pool->release(block);
+            //             p_buf->block_count_.fetch_sub(1);
+            //         }
+            //     }
+            // }
+            if (p_buf) {
+                p_buf->total_read += len;
+                p_buf->size_.fetch_sub(len, std::memory_order_relaxed);
+            }
+        }
+    };
+    friend DataView;
 
     private:
     struct BlockRecord {
@@ -98,6 +160,7 @@ class StreamBuf {
     std::shared_mutex global_mutex; // 全局读写锁，防止遍历时结构变化
 
     size_t write_impl(const void *input, size_t len, bool blocking) {
+        using namespace std::chrono_literals;
         const char *data = static_cast<const char *>(input);
         size_t written = 0;
 
@@ -109,6 +172,13 @@ class StreamBuf {
             size_t remaining = BLOCK_SIZE - current_block->write_pos;
 
             if (remaining == 0) {
+                if (block_count_.load() >= MAX_BLOCK) {
+                    // LOG_F(INFO, "MAX block");
+                    lock.unlock();
+                    std::this_thread::yield();
+                    // std::this_thread::sleep_for(1ms);
+                    continue;
+                }
                 if (Block *new_block = block_pool->acquire()) {
                     current_block->next.store(
                         new_block, std::memory_order_release);
@@ -117,7 +187,7 @@ class StreamBuf {
                     continue;
                 }
                 if (!blocking) return written;
-                // lock.unlock();
+                lock.unlock();
                 // std::this_thread::yield();
                 continue;
             }
@@ -145,6 +215,8 @@ class StreamBuf {
                 current_block->write_pos - current_block->read_pos;
 
             if (available == 0) {
+                // if (current_block == tail.load(std::memory_order_acquire))
+                //     return read;
                 if (Block *next_block =
                         current_block->next.load(std::memory_order_acquire)) {
                     head.store(next_block, std::memory_order_release);
@@ -153,7 +225,7 @@ class StreamBuf {
                     continue;
                 }
                 if (!blocking) return read;
-                // lock.unlock();
+                lock.unlock();
                 // std::this_thread::yield();
                 continue;
             }
@@ -165,6 +237,7 @@ class StreamBuf {
             read += to_read;
             size_.fetch_sub(to_read, std::memory_order_relaxed);
         }
+        total_read += read;
         return read;
     }
 
@@ -173,6 +246,7 @@ class StreamBuf {
         Block *init_block = block_pool->acquire();
         head.store(init_block);
         tail.store(init_block);
+        total_read = 0;
     }
 
     ~StreamBuf() {
@@ -185,9 +259,9 @@ class StreamBuf {
     }
 
     // 非阻塞写入
-    size_t try_write(const void *data, size_t len) {
-        return write_impl(data, len, false);
-    }
+    // size_t try_write(const void *data, size_t len) {
+    //     return write_impl(data, len, false);
+    // }
 
     // 读取数据
     size_t read(void *data, size_t len) {
@@ -195,8 +269,33 @@ class StreamBuf {
     }
 
     // 非阻塞读取
-    size_t try_read(void *data, size_t len) {
-        return read_impl(data, len, false);
+    std::shared_ptr<DataView> try_read(size_t len) {
+        std::shared_ptr<DataView> ret;
+        Block *current_block = head.load(std::memory_order_acquire);
+        size_t available;
+        while (current_block) {
+            std::unique_lock<std::mutex> lock(current_block->block_mutex);
+            available = current_block->write_pos - current_block->read_pos;
+            if (available == 0) {
+                if (current_block->write_pos != current_block->data.size())
+                    return ret;
+                // if (current_block == tail.load(std::memory_order_acquire))
+                //     return ret;
+                Block *next =
+                    current_block->next.load(std::memory_order_acquire);
+                if (!next) return ret;
+                block_pool->release(current_block);
+                block_count_.fetch_sub(1);
+                head.store(next, std::memory_order_release);
+                current_block = next;
+                continue;
+            }
+            size_t to_read = std::min(available, len);
+            ret = std::make_shared<DataView>(std::move(lock), this,
+                current_block, current_block->read_pos, to_read);
+            break;
+        }
+        return ret;
     }
 
     // 预览数据（不移动读指针）

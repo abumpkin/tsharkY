@@ -259,6 +259,7 @@ struct Controller : public oatpp::web::server::api::ApiController {
         ENDPOINT_ASYNC_INIT(capture_load_file);
         std::future<bool> res;
         Action act() override {
+            using namespace std::chrono_literals;
             std::string path =
                 utils_url_decode(request->getQueryParameter("path"));
             auto ret = DTO_Base::createShared();
@@ -266,7 +267,7 @@ struct Controller : public oatpp::web::server::api::ApiController {
             if (res.valid()) {
                 std::future_status stat = res.wait_for(std::chrono::seconds(0));
                 if (stat == std::future_status::timeout) {
-                    return repeat();
+                    return waitRepeat(100ms);
                 }
             }
             if (res.get()) {
@@ -473,6 +474,24 @@ void interrupt(int sig) {
 }
 
 int main(int argc, char **argv) {
+    loguru::g_stderr_verbosity = 0; // 0 (INFO) by default.
+    loguru::g_colorlogtostderr =
+        true; // If you don't want color in your terminal.
+    loguru::g_flush_interval_ms = 0; // Unbuffered (0) by default.
+    loguru::g_preamble_header =
+        true; // Prepend each log start by a descriptions line with all columns
+              // name?
+    loguru::g_preamble = true; // Prefix each log line with date, time etc?
+
+    // Turn off individual parts of the preamble
+    loguru::g_preamble_date = false;  // The date field
+    loguru::g_preamble_time = false;  // The time of the current day
+    loguru::g_preamble_uptime = true; // The time since init call
+    loguru::g_preamble_thread = true; // The logging thread
+    loguru::g_preamble_file =
+        true; // The file from which the log originates from
+    loguru::g_preamble_verbose = true; // The verbosity field
+    loguru::g_preamble_pipe = true; // The pipe symbol right before the message
     loguru::init(argc, argv);
     signal(SIGINT, interrupt);
     //  loguru::add_file("logs.txt", loguru::Append, loguru::Verbosity_MAX);

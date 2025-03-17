@@ -66,6 +66,8 @@
       },
       "windows": {
         "command": [
+          "cmd /c 'rmdir /s /q build\\tests\\CMakeFiles\\${fileBasenameNoExtension}.dir';",
+          "cmd /c 'rmdir /s /q build\\tshark_server\\CMakeFiles\\tshark_server.dir';",
           "cmd /c",
           "'call \\\"C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Auxiliary/Build/vcvarsall.bat\\\" x64",
           "&&",
@@ -99,7 +101,6 @@
           "'call \\\"C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Auxiliary/Build/vcvarsall.bat\\\" x64",
           "&&",
           "cmake --build build --target ${fileBasenameNoExtension}' ;",
-          "cmd /c 'rmdir /s /q build\\tests\\CMakeFiles\\${fileBasenameNoExtension}.dir'",
         ],
         "problemMatcher": [
           {
@@ -144,7 +145,6 @@
           "'call \\\"C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Auxiliary/Build/vcvarsall.bat\\\" x64",
           "&&",
           "cmake --build build --target tshark_server' ;",
-          "cmd /c 'rmdir /s /q build\\tshark_server\\CMakeFiles\\tshark_server.dir'",
         ],
         "problemMatcher": [
           {

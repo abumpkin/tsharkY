@@ -21,24 +21,21 @@
  */
 
 #pragma once
+#include <fmt/core.h>
 #include "SQLiteCpp/Database.h"
 #include "SQLiteCpp/Savepoint.h"
 #include "SQLiteCpp/Statement.h"
 #include "SQLiteCpp/Transaction.h"
-#include "fmt/format.h"
 #include "mutils.h"
 #include "tshark_info.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <cstdint>
-#include <cstring>
 #include <exception>
 #include <filesystem>
-#include <fmt/core.h>
 #include <loguru.hpp>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
-#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -113,7 +110,7 @@ struct TsharkDB {
 
         protected:
         virtual int exec(std::string const &sql) {
-            TsharkDB::ProtectedDB db = con->get_db();
+            auto db = con->get_db();
             try {
                 return db->exec(sql);
             }
@@ -124,7 +121,7 @@ struct TsharkDB {
         }
 
         virtual int clear() {
-            TsharkDB::ProtectedDB db = con->get_db();
+            auto db = con->get_db();
             std::string sql = R"(
                 DELETE FROM {}
             )";
@@ -145,7 +142,7 @@ struct TsharkDB {
         public:
         FixedDataTable(TsharkDB *con) : TableBase(con, "fixed_data") {
             check_table();
-            TsharkDB::ProtectedDB db = con->get_db();
+            auto db = con->get_db();
             std::string sql = R"(
                 INSERT OR REPLACE INTO {} VALUES (
                     @format,
@@ -162,7 +159,7 @@ struct TsharkDB {
         }
 
         int check_table() {
-            TsharkDB::ProtectedDB db = con->get_db();
+            auto db = con->get_db();
             std::string sql = R"(
                 CREATE TABLE IF NOT EXISTS {} (
                     format TEXT PRIMARY KEY NOT NULL ON CONFLICT REPLACE,
@@ -176,7 +173,7 @@ struct TsharkDB {
         int save(std::vector<char> const &data, std::string format) {
             if (!stat_insert) return 0;
             clear();
-            TsharkDB::ProtectedDB db = con->get_db();
+            auto db = con->get_db();
             fixed.reset();
             try {
                 stat_insert->reset();
@@ -193,7 +190,7 @@ struct TsharkDB {
         std::shared_ptr<std::vector<char>> get_data() {
             if (fixed) return fixed;
             if (!stat_select) return fixed;
-            TsharkDB::ProtectedDB db = con->get_db();
+            auto db = con->get_db();
             fixed = std::make_shared<std::vector<char>>();
             if (con->has_transaction()) con->commit_transaction();
             try {
@@ -295,10 +292,10 @@ struct TsharkDB {
         public:
         PacketTable(TsharkDB *con) : TableBase(con, "packet_table") {
             check_table();
-            TsharkDB::ProtectedDB db = con->get_db();
+            auto db = con->get_db();
             std::string sql = R"(
             INSERT OR REPLACE INTO {} VALUES (
-                :{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{}, :{}
+                :{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{}
             )
             )";
             sql = fmt::format(sql, name,     //
@@ -319,6 +316,7 @@ struct TsharkDB {
                 (int)Fields.data,            //
                 (int)Fields.session_id       //
             );
+            // LOG_F(INFO, "%s", sql.c_str());
             stat_insert = std::make_unique<SQLite::Statement>(*db, sql);
             sql = R"(
                 DELETE FROM {} WHERE idx = :{}
@@ -388,7 +386,7 @@ struct TsharkDB {
         uint32_t size(bool update = false) {
             if (!update) return total_count;
             if (!stat_size) return 0;
-            TsharkDB::ProtectedDB db = con->get_db();
+            auto db = con->get_db();
             stat_size->reset();
             try {
                 if (stat_size->executeStep()) {
@@ -409,7 +407,7 @@ struct TsharkDB {
         }
 
         int check_table() {
-            TsharkDB::ProtectedDB db = con->get_db();
+            auto db = con->get_db();
             std::string sql = R"(
                 CREATE TABLE IF NOT EXISTS {} (
                     {}
@@ -423,7 +421,7 @@ struct TsharkDB {
 
         int insert(std::shared_ptr<Packet> p) {
             if (!stat_insert) return 0;
-            TsharkDB::ProtectedDB db = con->get_db();
+            auto db = con->get_db();
             try {
                 stat_insert->reset();
                 stat_insert->bind((int)Fields.idx, p->idx);
@@ -461,7 +459,7 @@ struct TsharkDB {
 
         int delete_one(uint32_t idx) {
             if (!stat_delete) return 0;
-            TsharkDB::ProtectedDB db = con->get_db();
+            auto db = con->get_db();
             try {
                 stat_delete->reset();
                 stat_delete->bind((int)Fields.idx, idx);
@@ -478,7 +476,7 @@ struct TsharkDB {
 
         std::shared_ptr<Packet> select(uint32_t idx, FixedDataTable &dbfixed) {
             if (!stat_select_one) return nullptr;
-            TsharkDB::ProtectedDB db = con->get_db();
+            auto db = con->get_db();
             if (con->has_transaction()) con->commit_transaction();
             try {
                 stat_select_one->reset();
@@ -498,7 +496,7 @@ struct TsharkDB {
             uint32_t pos, uint32_t size, FixedDataTable &dbfixed) {
             std::vector<std::shared_ptr<Packet>> ret;
             if (!stat_select) return ret;
-            TsharkDB::ProtectedDB db = con->get_db();
+            auto db = con->get_db();
             if (con->has_transaction()) con->commit_transaction();
             try {
                 stat_select->reset();
@@ -520,7 +518,7 @@ struct TsharkDB {
             FixedDataTable &dbfixed) {
             std::vector<std::shared_ptr<Packet>> ret;
             if (!stat_select) return ret;
-            TsharkDB::ProtectedDB db = con->get_db();
+            auto db = con->get_db();
             if (con->has_transaction()) con->commit_transaction();
             static const std::unordered_set<char const *> NumberParams = {
                 "pos", "size", "src_port", "dst_port", "cap_len"};
@@ -639,7 +637,7 @@ struct TsharkDB {
         public:
         SessionTable(TsharkDB *con) : TableBase(con, "session_table") {
             check_table();
-            TsharkDB::ProtectedDB db = con->get_db();
+            auto db = con->get_db();
             std::string sql = R"(
             INSERT OR REPLACE INTO {} VALUES (
                 :{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{},:{}
@@ -734,7 +732,7 @@ struct TsharkDB {
         uint32_t size(bool update = false) {
             if (!update) return total_count;
             if (!stat_size) return 0;
-            TsharkDB::ProtectedDB db = con->get_db();
+            auto db = con->get_db();
             stat_size->reset();
             try {
                 if (stat_size->executeStep()) {
@@ -749,7 +747,7 @@ struct TsharkDB {
         }
 
         int check_table() {
-            TsharkDB::ProtectedDB db = con->get_db();
+            auto db = con->get_db();
             std::string sql = R"(
                 CREATE TABLE IF NOT EXISTS {} (
                     {}
@@ -763,7 +761,7 @@ struct TsharkDB {
 
         int insert(std::shared_ptr<Session> p) {
             if (!stat_insert) return 0;
-            TsharkDB::ProtectedDB db = con->get_db();
+            auto db = con->get_db();
             try {
                 stat_insert->reset();
                 stat_insert->bind((int)Fields.session_id, p->session_id);
@@ -802,7 +800,7 @@ struct TsharkDB {
 
         int delete_one(uint32_t idx) {
             if (!stat_delete) return 0;
-            TsharkDB::ProtectedDB db = con->get_db();
+            auto db = con->get_db();
             try {
                 stat_delete->reset();
                 stat_delete->bind((int)Fields.session_id, idx);
@@ -821,7 +819,7 @@ struct TsharkDB {
             std::unordered_map<std::string, std::string> params) {
             std::vector<std::shared_ptr<Session>> ret;
             if (!stat_select) return ret;
-            TsharkDB::ProtectedDB db = con->get_db();
+            auto db = con->get_db();
             if (con->has_transaction()) con->commit_transaction();
             static const std::unordered_set<char const *> NumberParams = {
                 "pos", "size"};
@@ -868,15 +866,18 @@ struct TsharkDB {
 
     private:
     std::shared_mutex mt;
-    std::unique_ptr<SQLite::Database> db;
+    std::shared_ptr<SQLite::Database> db;
     std::unique_ptr<SQLite::Transaction> transaction;
 
     TsharkDB(std::string const &path) {
         utils_path_parent_mkdirs(path);
         if (!utils_test_valid_filename(path).empty()) {
             try {
-                db = std::make_unique<SQLite::Database>(
+                db = std::make_shared<SQLite::Database>(
                     path, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+                db->exec("PRAGMA synchronous = OFF;");
+                db->exec("PRAGMA journal_mode = MEMORY;");
+                db->exec("PRAGMA cache_size = -10000;");
             }
             catch (std::exception &e) {
                 LOG_F(ERROR, "ERROR: %s", e.what());
@@ -958,8 +959,8 @@ struct TsharkDB {
         new (this) TsharkDB(path.generic_string());
     }
 
-    ProtectedDB get_db() {
-        return ProtectedDB(this, mt);
+    ProtectedObj<SQLite::Database> get_db() {
+        return ProtectedObj(db, mt);
     }
 
     ~TsharkDB() {

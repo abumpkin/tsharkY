@@ -21,10 +21,6 @@
  */
 
 #pragma once
-#include "rapidjson/document.h"
-#include "rapidjson/prettywriter.h"
-#include "rapidjson/stringbuffer.h"
-#include "rapidjson/writer.h"
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
@@ -35,8 +31,13 @@
 #include <iostream>
 #include <loguru.hpp>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <queue>
+#include <rapidjson/document.h>
+#include <rapidjson/prettywriter.h>
+#include <rapidjson/stringbuffer.h>
+#include <rapidjson/writer.h>
 #include <shared_mutex>
 #include <sstream>
 #include <stdexcept>
@@ -44,6 +45,11 @@
 #include <unordered_map>
 #include <vector>
 #include <xdb_search.h>
+
+#ifdef __linux__
+#include <pthread.h>
+#include <sched.h>
+#endif
 
 #ifdef _WIN32
 #include <windows.h>
@@ -112,6 +118,27 @@ inline std::string const utils_data_to_hex(std::vector<char> const &data) {
         }
     }
     return ret;
+}
+
+inline std::vector<std::string> utils_split_str(
+    const std::string &s, char delimiter) {
+    std::vector<std::string> tokens;
+    // 预分配内存（通过计算分隔符数量）
+    size_t delimiter_count = 0;
+    for (char c : s) {
+        if (c == delimiter) delimiter_count++;
+    }
+    tokens.reserve(delimiter_count + 1);
+    // 单次遍历分割字符串
+    size_t start = 0;
+    while (true) {
+        size_t end = s.find(delimiter, start);
+        tokens.push_back(s.substr(start,
+            (end == std::string::npos) ? s.size() - start : end - start));
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return tokens;
 }
 
 inline std::vector<std::string> const utils_split_str(
@@ -190,13 +217,36 @@ inline std::string const utils_ip2region(std::string ip) {
         return std::move(xdb);
     }();
     ret = searcher->search(ip);
+    // 提前返回条件检查
     if (ret.find("invalid") != std::string::npos) return "";
     if (ret.find("内网") != std::string::npos) return "内网";
-    ret = utils_replace_str_all(ret, "0", "");
-    std::vector<std::string> parts = utils_split_str(ret, "|");
-    parts.pop_back();
-    ret = utils_join_str(parts, "-");
-    return ret;
+    // 原地过滤字符'0'（比替换更高效）
+    ret.erase(std::remove(ret.begin(), ret.end(), '0'), ret.end());
+
+    // 分割字符串并拼接
+    std::string result;
+    size_t start = 0;
+    size_t end = ret.find('|');
+
+    // 预分配内存优化拼接
+    result.reserve(ret.size()); // 预分配足够的内存
+
+    while (end != std::string::npos) {
+        if (start != end) { // 避免空字符串
+            if (!result.empty()) result += '-';
+            result.append(ret, start, end - start);
+        }
+        start = end + 1;
+        end = ret.find('|', start);
+    }
+
+    // 处理最后一个部分
+    if (start < ret.size()) {
+        if (!result.empty()) result += '-';
+        result.append(ret, start, ret.size() - start);
+    }
+
+    return result;
 }
 
 inline std::filesystem::path utils_test_valid_filename(
@@ -571,6 +621,132 @@ struct ProtectedObj : std::shared_lock<std::shared_mutex> {
         return p.get();
     }
     T &operator*() {
-        return *p;
+        return *p.get();
     }
 };
+
+inline std::string FriendlyFileSize(uint64_t size) {
+    std::stringstream output;
+    double res = size;
+    const char *const units[] = {"B", "KB", "MB", "GB", "TB"};
+    int scale = 0;
+    while (res > 1024.0 && scale < 4) {
+        res /= 1024.0;
+        scale++;
+    }
+    output << std::setprecision(3) << std::fixed << res << " " << units[scale];
+    return output.str();
+}
+
+inline void ShowHex(char const *data, uint64_t len, int width = 32,
+    int preWhite = 0, uint32_t divisionHeight = (uint32_t)-1,
+    bool showAscii = true) {
+    uint64_t dpos = 0;
+    uint32_t dDivide = divisionHeight;
+    uint32_t blockNum = 1;
+    while (dpos < len) {
+        for (int p = preWhite; p; p--) {
+            std::cout << " ";
+        }
+        for (int p = 0; p < width; p++) {
+            if (dpos + p >= len) {
+                for (int o = (width - p) * 3; o; o--) {
+                    std::cout << " ";
+                }
+                break;
+            }
+            std::cout << std::uppercase << std::hex << std::setw(2)
+                      << std::right << std::setfill('0')
+                      << (uint32_t)(uint8_t)data[dpos + p] << " ";
+        }
+        if (showAscii) {
+            std::cout << "    ";
+            for (int p = 0; p < width; p++) {
+                if (dpos + p >= len) {
+                    break;
+                }
+                if ((uint8_t)data[dpos + p] >= 0x20 &&
+                    (uint8_t)data[dpos + p] <= 0x7E) {
+                    std::cout << data[dpos + p];
+                }
+                else {
+                    std::cout << ".";
+                }
+            }
+        }
+        std::cout << std::endl;
+        if (!(--dDivide)) {
+            for (int p = preWhite; p; p--) {
+                std::cout << " ";
+            }
+            std::cout << "  偏移: 0x" << std::hex << std::uppercase
+                      << std::setw(8) << std::setfill('0') << dpos + width;
+            std::cout << "  块号: " << std::dec << blockNum;
+            std::cout << std::endl;
+            dDivide = divisionHeight;
+            blockNum++;
+        }
+        dpos += width;
+    }
+}
+
+// 正常优先级 = 7
+inline void utils_set_priority(
+    std::thread::native_handle_type handle, int priority) {
+    // 确保优先级在 0-9 范围内
+    if (priority < 0 || priority > 9) {
+        std::cerr << "Priority must be between 0 and 9.\n";
+        return;
+    }
+
+#ifdef _WIN32
+    // Windows 平台
+    // 将 0-9 映射到 Windows 的线程优先级范围
+    int winPriority;
+    if (priority == 0) {
+        winPriority = THREAD_PRIORITY_IDLE;
+    }
+    else if (priority <= 3) {
+        winPriority = THREAD_PRIORITY_LOWEST;
+    }
+    else if (priority <= 5) {
+        winPriority = THREAD_PRIORITY_BELOW_NORMAL;
+    }
+    else if (priority <= 7) {
+        winPriority = THREAD_PRIORITY_NORMAL;
+    }
+    else if (priority <= 8) {
+        winPriority = THREAD_PRIORITY_ABOVE_NORMAL;
+    }
+    else {
+        winPriority = THREAD_PRIORITY_HIGHEST;
+    }
+
+    if (!SetThreadPriority(handle, winPriority)) {
+        std::cerr << "Failed to set thread priority. Error: " << GetLastError()
+                  << "\n";
+    }
+#else
+    // Linux 平台
+    // 将 0-9 映射到 Linux 的实时优先级范围（1-99）
+    int linuxPriority = (priority * 10) + 1; // 映射到 1-99
+    if (linuxPriority > 99) {
+        linuxPriority = 99;
+    }
+
+    sched_param param;
+    param.sched_priority = linuxPriority;
+
+    if (pthread_setschedparam(handle, SCHED_FIFO, &param) != 0) {
+        std::cerr << "Failed to set thread priority.\n";
+    }
+#endif
+}
+
+inline std::thread::native_handle_type utils_get_thread_handle() {
+#ifdef _WIN32
+    return GetCurrentThread(); // Windows
+#else
+    return pthread_self(); // Linux
+#endif
+}

@@ -112,7 +112,7 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
         packet->fixed = p_fixed;
         // 加入待解析队列
         using namespace std::chrono_literals;
-        while (packets_pending.size() > MAX_QUEUE) {
+        while (packets_pending.size() >= MAX_QUEUE) {
             std::this_thread::sleep_for(1ms);
         }
         {
@@ -124,9 +124,9 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
     virtual void wait_done() override {
         using namespace std::chrono_literals;
         if (p_t) {
-            while (packets_pending.size()) {
-                // std::this_thread::yield();
-                std::this_thread::sleep_for(1ms);
+            while (packets_pending.size() || write_buffer.size() != 0) {
+                std::this_thread::yield();
+                std::this_thread::sleep_for(100ms);
             }
         }
     }
@@ -148,6 +148,7 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
 
     // 解析线程
     static void thread(ParserStreamPacket *p) {
+        utils_set_priority(utils_get_thread_handle(), 6);
         using namespace std::chrono_literals;
         uint32_t idx = 0;
         std::string explain;
@@ -161,14 +162,17 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
             } while (!p->eof() && rd_len);
         };
         std::chrono::high_resolution_clock::time_point start_time;
-        double speed = 0;
-        while (!p->eof()) {
+        uint64_t speed = 0, res_speed = 0;
+        while (!p->eof() && !p->stop_ctl) {
             if (std::chrono::high_resolution_clock::now() - start_time >
                 std::chrono::seconds(1)) {
                 start_time = std::chrono::high_resolution_clock::now();
-                LOG_F(INFO, "speed: %.2fKb/s  total: %dkb",
-                    (double)(buf.size() - speed) / 1024, buf.size() / 1024);
-                speed = buf.size();
+                LOG_F(INFO, "(res: %s/s)(resbuf:%s/s = %s)",
+                    FriendlyFileSize(p->read_offset() - speed).c_str(),
+                    FriendlyFileSize(buf.total_read - res_speed).c_str(),
+                    FriendlyFileSize(buf.size()).c_str());
+                speed = p->read_offset();
+                res_speed = buf.total_read;
             }
             read_some();
             if (p->packets_pending.empty()) {
@@ -185,27 +189,45 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
                 packet = p->packets_pending.front();
                 p->packets_pending.pop();
             }
-            // continue;
             do {
                 read_some();
                 explain = buf.try_read_util('\n');
                 if (!explain.empty()) break;
-                std::this_thread::sleep_for(1ms);
+                // std::this_thread::sleep_for(1ms);
             } while (!p->stop_ctl);
-            explain.pop_back();
-
+            explain.back() = 0;
             if (p->stop_ctl) break;
-            std::vector<std::string> fields;
+
             CMD_Fields cmd_field;
-            fields = utils_split_str(explain, "\t");
-            if (fields.size() < CMD_FIELD_NUM)
-                throw std::runtime_error("parser error");
-            for (uint32_t i = 0; i < CMD_FIELD_NUM; i++) {
-                reinterpret_cast<char const **>(&cmd_field)[i] = "";
-                if (i < fields.size())
-                    reinterpret_cast<char const **>(&cmd_field)[i] =
-                        fields[i].c_str();
+            char const *p_field = explain.data();
+            char const *p_end = explain.data() + explain.size();
+            uint32_t field_size = 0;
+            for (char *i = explain.data(); i != p_end; i++) {
+                if (*i == '\t') {
+                    *i = '\0';
+                    reinterpret_cast<char const **>(&cmd_field)[field_size++] =
+                        p_field;
+                    p_field = i + 1;
+                }
+                if (field_size >= CMD_FIELD_NUM) break;
             }
+            if (field_size < CMD_FIELD_NUM) {
+                reinterpret_cast<char const **>(&cmd_field)[field_size++] =
+                    p_field;
+            }
+            if (field_size < CMD_FIELD_NUM)
+                throw std::runtime_error("parser error");
+
+            // std::vector<std::string> fields;
+            // fields = utils_split_str(explain, "\t");
+            // if (fields.size() < CMD_FIELD_NUM)
+            //     throw std::runtime_error("parser error");
+            // for (uint32_t i = 0; i < CMD_FIELD_NUM; i++) {
+            //     reinterpret_cast<char const **>(&cmd_field)[i] = "";
+            //     if (i < fields.size())
+            //         reinterpret_cast<char const **>(&cmd_field)[i] =
+            //             fields[i].c_str();
+            // }
 
             // index
             packet->idx = idx++;
@@ -242,6 +264,11 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
             packet->src_location = utils_ip2region(packet->src_ip);
             packet->dst_location = utils_ip2region(packet->dst_ip);
 
+            // if (p->handler) {
+            //     p->handler(packet, Status::PKT_ARRIVE);
+            // }
+            // continue;
+
             // 传输层协议号
             const char *p_proto_code = cmd_field.ip_proto;
             if (strlen(p_proto_code) && std::isdigit(*p_proto_code)) {
@@ -260,6 +287,7 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
                 p->handler(packet, Status::PKT_ARRIVE);
             }
         }
+        LOG_F(INFO, "Parser Thread Exit.");
     }
 
     virtual ~ParserStreamPacket() {

@@ -12,4 +12,6 @@
         "editor.stickyScroll.defaultModel": "foldingProviderModel",
         "editor.suggest.insertMode": "replace"
     },
+    "terminal.integrated.scrollback": 10000,
+    "clangd.trace": ".cache/trace.log"
 }

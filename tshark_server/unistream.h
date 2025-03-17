@@ -23,6 +23,9 @@
 #pragma once
 #include "database.h"
 #include "mutils.h"
+#include "streambuf.h"
+#include <chrono>
+#include <condition_variable>
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
@@ -38,6 +41,7 @@
 #include <memory>
 #include <minwinbase.h>
 #include <minwindef.h>
+#include <mutex>
 #include <mutils.h>
 #include <namedpipeapi.h>
 #include <sstream>
@@ -61,8 +65,8 @@ struct UniStreamInterface {
     UniStreamInterface() = default;
     UniStreamInterface(UniStreamInterface &) = delete;
     UniStreamInterface &operator=(UniStreamInterface &) = delete;
-    UniStreamInterface(UniStreamInterface &&) = default;
-    UniStreamInterface &operator=(UniStreamInterface &&) = default;
+    UniStreamInterface(UniStreamInterface &&) = delete;
+    UniStreamInterface &operator=(UniStreamInterface &&) = delete;
     virtual uint32_t read(char *buf, uint32_t len) = 0;
     virtual uint32_t read_ub(char *, uint32_t) {
         throw std::runtime_error("read_ub not implement.");
@@ -279,10 +283,63 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
     protected:
     UniStreamDualPipeU() {}
 
+    std::unique_ptr<std::thread> t_write;
+    std::mutex t_m;
+    std::condition_variable cv;
+    bool t_stop_ctl, t_flush_ctl;
+    StreamBuf<4096, 1000> write_buffer;
+    static void write_thread(UniStreamDualPipeU *p) {
+        utils_set_priority(utils_get_thread_handle(), 6);
+        using namespace std::chrono_literals;
+        uint64_t speed = 0;
+        std::chrono::high_resolution_clock::time_point start_time =
+            std::chrono::high_resolution_clock::now();
+        auto exe_write = [&]() {
+            auto data = p->write_buffer.try_read(4096);
+            if (data) {
+                p->_write(data->data, data->len);
+                // std::cout << utils_data_to_hex(std::vector<char>(
+                //                  data->data, data->data + data->len))
+                //           << std::endl;
+                if (std::chrono::high_resolution_clock::now() - start_time >
+                    1s) {
+                    LOG_F(INFO, "(buf: %s)WriteFile %s/s=%s",
+                        FriendlyFileSize(p->write_buffer.size()).c_str(),
+                        FriendlyFileSize(p->w_pos - speed).c_str(),
+                        FriendlyFileSize(p->w_pos).c_str());
+                    start_time = std::chrono::high_resolution_clock::now();
+                    speed = p->w_pos;
+                }
+            }
+            data.reset();
+        };
+        while (!p->t_stop_ctl && p->alive()) {
+            // std::unique_lock<std::mutex> lock(p->t_m);
+            // LOG_F(INFO, "Write Wait!");
+            // p->cv.wait_for(lock, 100ms, [&] {
+            //     return p->write_buffer.size() > 2 || p->t_flush_ctl;
+            // });
+            // lock.unlock();
+            if (p->write_buffer.block_count() < 2 && !p->t_flush_ctl) {
+                std::this_thread::sleep_for(10ms);
+            }
+            exe_write();
+            if (p->t_flush_ctl) {
+                while (p->write_buffer.size()) {
+                    exe_write();
+                }
+                p->t_flush_ctl = false;
+            }
+            // LOG_F(INFO, "Write Start!");
+            // std::this_thread::yield();
+        }
+        LOG_F(INFO, "Uni Write Exit! a: %d", p->alive());
+    }
+
     public:
     UniStreamDualPipeU(
         const std::string &command, std::string np_placeholder = "")
-        : r_pos(0), w_pos(0) {
+        : r_pos(0), w_pos(0), t_stop_ctl(false), t_flush_ctl(false) {
 #ifdef _WIN32
         nwpipe_name.clear();
         nwpipe_con = false;
@@ -446,10 +503,16 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
             throw std::runtime_error("Failed to fork");
         }
 #endif
+        t_write = std::make_unique<std::thread>(write_thread, this);
     }
 
     virtual ~UniStreamDualPipeU() {
         terminate();
+        if (t_write) {
+            t_stop_ctl = true;
+            t_write->join();
+            t_write.reset();
+        }
     }
 
     bool alive() {
@@ -471,6 +534,10 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
 
     void terminate() {
 #ifdef _WIN32
+        // using namespace std::chrono_literals;
+        // while (read_read_ctx) {
+        //     std::this_thread::sleep_for(1ms);
+        // }
         if (!nwpipe_name.empty() && hWritePipeIn)
             DisconnectNamedPipe(hWritePipeIn);
         if (hReadPipeOut) {
@@ -545,6 +612,7 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
             else {
                 // 立即读取成功
                 read_read_ctx.reset();
+                r_pos += bytesRead;
                 return bytesRead;
             }
         }
@@ -556,6 +624,7 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
             if (result) {
                 // 收到数据
                 read_read_ctx.reset();
+                r_pos += bytesRead;
                 return bytesRead;
             }
             else if (err == ERROR_IO_INCOMPLETE) {
@@ -606,7 +675,7 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
 #endif
     }
 
-    virtual uint32_t write(const char *buf, uint32_t len) override {
+    virtual uint32_t _write(const char *buf, uint32_t len) {
         if (!alive()) return 0;
 #ifdef _WIN32
         DWORD bytesWritten;
@@ -631,7 +700,46 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
 #endif
     }
 
+    virtual uint32_t write(const char *buf, uint32_t len) override {
+        if (!alive()) return 0;
+        // LOG_F(INFO, "M Write Lock!");
+        // std::unique_lock<std::mutex> lock(t_m, std::defer_lock);
+        // LOG_F(INFO, "M Write Wait!");
+        // while (!lock.try_lock()) {
+        //     std::this_thread::yield();
+        // }
+        write_buffer.write(buf, len);
+        // LOG_F(INFO, "M Write notify!");
+        // cv.notify_one();
+        return len;
+
+        // if (!alive()) return 0;
+        // #ifdef _WIN32
+        //         DWORD bytesWritten;
+        //         if (!hWritePipeIn) return 0;
+        //         if (!nwpipe_name.empty() && !nwpipe_con) {
+        //             if (!ConnectNamedPipe(hWritePipeIn, nullptr)) {
+        //                 // if (npipe_con) eof_f = true;
+        //             }
+        //             nwpipe_con = true;
+        //         }
+        //         if (WriteFile(hWritePipeIn, buf, static_cast<DWORD>(len),
+        //         &bytesWritten,
+        //                 nullptr)) {
+        //             w_pos += bytesWritten;
+        //             return bytesWritten;
+        //         }
+        //         return 0;
+        // #else
+        //         size_t ret = ::write(childStdin, buf, len);
+        //         if (ret == -1ull) return 0;
+        //         w_pos += ret;
+        //         return ret;
+        // #endif
+    }
+
     virtual void flush() override {
+        t_flush_ctl = true;
 #ifdef _WIN32
         // Windows平台：调用FlushFileBuffers刷新管道
         if (hWritePipeIn) FlushFileBuffers(hWritePipeIn);
@@ -758,7 +866,7 @@ class UniSyncR2W : virtual public UniStreamInterface {
 
     template <typename R, typename W>
     static _T Make(R &&r_, W &&w_) {
-        return std::make_shared<UniSyncR2W>(::UniSyncR2W(r_, w_));
+        return std::make_shared<UniSyncR2W>(r_, w_);
     }
 
     template <typename R, typename W, typename... Ts>
@@ -768,13 +876,13 @@ class UniSyncR2W : virtual public UniStreamInterface {
 
     virtual uint32_t read(char *buf, uint32_t len) override {
         uint32_t ret = r->read(buf, len);
-        w->write(buf, ret);
+        if (w) w->write(buf, ret);
         // w->flush();
         return ret;
     }
     virtual uint32_t read_ub(char *buf, uint32_t len) override {
         uint32_t ret = r->read_ub(buf, len);
-        w->write(buf, ret);
+        if (w) w->write(buf, ret);
         // w->flush();
         return ret;
     }
@@ -782,11 +890,11 @@ class UniSyncR2W : virtual public UniStreamInterface {
         return 0;
     }
     virtual void close_write() override {
-        w->close_write();
+        if (w) w->close_write();
     }
     virtual void close_read() override {
         r->close_read();
-        w->close_read();
+        if (w) w->close_read();
     }
     virtual bool eof() override {
         return r->eof();
@@ -795,9 +903,10 @@ class UniSyncR2W : virtual public UniStreamInterface {
         return r->read_offset();
     }
     virtual uint32_t write_offset() override {
+        if (!w) return 0;
         return w->write_offset();
     }
     virtual void flush() override {
-        w->flush();
+        if (w) w->flush();
     }
 };

@@ -21,6 +21,7 @@
  */
 
 #pragma once
+#include "SQLiteCpp/Exception.h"
 #include "analysis.h"
 #include "database.h"
 #include "mutils.h"
@@ -33,6 +34,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <functional>
 #include <future>
 #include <initializer_list>
@@ -80,6 +82,7 @@ struct SharkLoader {
 
     protected:
     void register_parser_stream(std::shared_ptr<ParserStream> const &parser) {
+        if (!parser) return;
         parsers.push_back(parser);
         if (!this->parser_stream) {
             this->parser_stream = this->in_stream;
@@ -89,7 +92,11 @@ struct SharkLoader {
 
     public:
     virtual bool load(ParserStreams const &ps) {
+        utils_set_priority(utils_get_thread_handle(), 9);
         stop_ctl = false;
+        if (!this->parser_stream) {
+            this->parser_stream = this->in_stream;
+        }
         for (auto &i : ps) {
             register_parser_stream(i);
         }
@@ -113,6 +120,7 @@ struct SharkLoader {
 
     ~SharkLoader() {
         if (!parser_stream->eof()) LOG_F(WARNING, "SharkLoader Exit bug.");
+        LOG_F(INFO, "SharkLoader Exit.");
     }
 };
 
@@ -577,6 +585,7 @@ class TSharkManager {
 
     std::chrono::high_resolution_clock::time_point start_time;
     uint32_t speed = 0, total = 0;
+    uint32_t read_speed = 0;
 
     // 重建解析器
     void recreate_ps() {
@@ -593,6 +602,7 @@ class TSharkManager {
             // 暂时无新数据包到达，提交事务
             if (st == ParserStreamPacket::Status::PKT_NONE) {
                 db->commit_transaction();
+                LOG_F(INFO, "Commit Transaction");
             }
             // 新数据包到达，进行分析、存储
             if (st == ParserStreamPacket::Status::PKT_ARRIVE) {
@@ -608,10 +618,12 @@ class TSharkManager {
                     std::chrono::seconds(1)) {
                     total += speed;
                     start_time = std::chrono::high_resolution_clock::now();
-                    LOG_F(INFO, "speed: %dpkt/s  buf: %ld/%d  total: %d", speed,
-                        p->fixed.use_count() - 4, ParserStreamPacket::MAX_QUEUE,
+                    LOG_F(INFO, "(in: %dpkt/s)(buf: %ld/%dpkt)(t: %d)", speed,
+                        p->fixed.use_count() - 2, ParserStreamPacket::MAX_QUEUE,
                         total);
+
                     speed = 0;
+                    read_speed = ps->write_offset();
                 }
             }
         };
@@ -625,18 +637,32 @@ class TSharkManager {
                     capture_thread.loader->get_format());
             }
             if (e == SharkLoader::E_LOAD_COMPLETE) {
-                db->start_transaction();
-                for (auto &i : *session_analyzer->get_sessions()) {
-                    db->table_session->insert(i);
+                LOG_F(WARNING, "Size: %s",
+                    FriendlyFileSize(
+                        capture_thread.loader->in_stream->read_offset())
+                        .c_str());
+                if (session_analyzer) {
+                    auto sessions = session_analyzer->get_sessions();
+                    if (sessions.p) {
+                        db->start_transaction();
+                        for (auto &i : *sessions) {
+                            db->table_session->insert(i);
+                        }
+                        db->commit_transaction();
+                    }
                 }
-                db->commit_transaction();
             }
         };
     }
 
     public:
     TSharkManager() {
-        db = TsharkDB::connect("dump_data/temp.db3");
+        try {
+            db = TsharkDB::connect("dump_data/temp.db3");
+        }
+        catch (SQLite::Exception &e) {
+            LOG_F(ERROR, "ERROR: %s", e.what());
+        }
     }
 
     std::future<bool> capture_start(

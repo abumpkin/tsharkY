@@ -7,7 +7,9 @@ InlayHints:
   TypeNameLimit: 24
 Completion:
   ArgumentLists: Delimiters
-Diagnostics:
-  ClangTidy:
-    Add:
-    Remove:
+# Diagnostics:
+#   ClangTidy:
+#     Add:
+#     Remove:
+# CompileFlags:
+#   CompilationDatabase: build
