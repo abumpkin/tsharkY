@@ -161,19 +161,11 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
                 if (rd_len) buf.write(data, rd_len);
             } while (!p->eof() && rd_len);
         };
-        std::chrono::high_resolution_clock::time_point start_time;
-        uint64_t speed = 0, res_speed = 0;
+        std::chrono::high_resolution_clock::time_point start_time =
+            std::chrono::high_resolution_clock::now();
+        uint64_t parse_speed = 0, parse_buf_speed = 0, pkt_speed = 0,
+                 total_pkt = 0, in_speed = 0, buf_speed = 0;
         while (!p->eof() && !p->stop_ctl) {
-            if (std::chrono::high_resolution_clock::now() - start_time >
-                std::chrono::seconds(1)) {
-                start_time = std::chrono::high_resolution_clock::now();
-                LOG_F(INFO, "(res: %s/s)(resbuf:%s/s = %s)",
-                    FriendlyFileSize(p->read_offset() - speed).c_str(),
-                    FriendlyFileSize(buf.total_read - res_speed).c_str(),
-                    FriendlyFileSize(buf.size()).c_str());
-                speed = p->read_offset();
-                res_speed = buf.total_read;
-            }
             read_some();
             if (p->packets_pending.empty()) {
                 if (p->stop_ctl) break;
@@ -197,6 +189,36 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
             } while (!p->stop_ctl);
             explain.back() = 0;
             if (p->stop_ctl) break;
+
+            pkt_speed++;
+            if (std::chrono::high_resolution_clock::now() - start_time >
+                std::chrono::seconds(1)) {
+                start_time = std::chrono::high_resolution_clock::now();
+                total_pkt += pkt_speed;
+                parse_speed = p->read_offset() - parse_speed;
+                parse_buf_speed = buf.total_read - parse_buf_speed;
+                in_speed = p->write_offset() - in_speed;
+                buf_speed = p->real_w_pos - buf_speed;
+                uint64_t parse_buf_size = buf.size();
+                LOG_F(INFO, "%s",
+                    fmt::format(
+                        R"([{}/s = {}][{}][{}/s => {}/{} => {} => {}/s => {} pkt/s = {} pkt])", //
+                        FriendlyFileSize(in_speed),          //[
+                        FriendlyFileSize(p->write_offset()), //]
+                        p->write_buffer.block_count(),       //
+                        // FriendlyFileSize(buf_speed),
+                        FriendlyFileSize(parse_speed).c_str(),
+                        p->packets_pending.size(), MAX_QUEUE,     //[]
+                        FriendlyFileSize(parse_buf_size).c_str(), //
+                        FriendlyFileSize(parse_buf_speed).c_str(), pkt_speed,
+                        total_pkt)
+                        .c_str());
+                parse_speed = p->read_offset();
+                parse_buf_speed = buf.total_read;
+                pkt_speed = 0;
+                in_speed = p->write_offset();
+                buf_speed = p->real_w_pos;
+            }
 
             CMD_Fields cmd_field;
             char const *p_field = explain.data();

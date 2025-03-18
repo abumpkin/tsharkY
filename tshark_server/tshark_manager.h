@@ -583,19 +583,13 @@ class TSharkManager {
     // 会话分析器
     std::shared_ptr<Analyzer::SessionAnalyzer> session_analyzer;
 
-    std::chrono::high_resolution_clock::time_point start_time;
-    uint32_t speed = 0, total = 0;
-    uint32_t read_speed = 0;
-
     // 重建解析器
     void recreate_ps() {
-        total = 0;
         // 重建会话分析器
         session_analyzer = Analyzer::SessionAnalyzer::create();
 
         // 重建数据库
         db->recreate();
-        start_time = std::chrono::high_resolution_clock::now();
         // 包解析结果处理函数
         auto handler = [&](std::shared_ptr<Packet> p,
                            ParserStreamPacket::Status st) {
@@ -617,19 +611,6 @@ class TSharkManager {
                 if (!db->has_transaction()) db->start_transaction();
                 // 插入数据到数据库
                 db->table_brief->insert(p);
-
-                speed++;
-                if (std::chrono::high_resolution_clock::now() - start_time >
-                    std::chrono::seconds(1)) {
-                    total += speed;
-                    start_time = std::chrono::high_resolution_clock::now();
-                    LOG_F(INFO, "(in: %dpkt/s)(buf: %ld/%dpkt)(t: %d)", speed,
-                        p->fixed.use_count() - 2, ParserStreamPacket::MAX_QUEUE,
-                        total);
-
-                    speed = 0;
-                    read_speed = ps->write_offset();
-                }
             }
         };
         ps = std::make_shared<ParserStreamPacket>(handler);

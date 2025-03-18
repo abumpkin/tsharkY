@@ -125,6 +125,9 @@ struct UniStreamInterface {
 };
 
 class UniStreamDualPipeU : virtual public UniStreamInterface {
+    public:
+    size_t real_w_pos;
+
     private:
     volatile size_t r_pos, w_pos;
     bool eof_f = false;
@@ -291,25 +294,11 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
     static void write_thread(UniStreamDualPipeU *p) {
         utils_set_priority(utils_get_thread_handle(), 6);
         using namespace std::chrono_literals;
-        uint64_t speed = 0;
-        std::chrono::high_resolution_clock::time_point start_time =
-            std::chrono::high_resolution_clock::now();
+        p->real_w_pos = 0;
         auto exe_write = [&]() {
             auto data = p->write_buffer.try_read(4096);
             if (data) {
-                p->_write(data->data, data->len);
-                // std::cout << utils_data_to_hex(std::vector<char>(
-                //                  data->data, data->data + data->len))
-                //           << std::endl;
-                if (std::chrono::high_resolution_clock::now() - start_time >
-                    1s) {
-                    LOG_F(INFO, "(buf: %s)WriteFile %s/s=%s",
-                        FriendlyFileSize(p->write_buffer.size()).c_str(),
-                        FriendlyFileSize(p->w_pos - speed).c_str(),
-                        FriendlyFileSize(p->w_pos).c_str());
-                    start_time = std::chrono::high_resolution_clock::now();
-                    speed = p->w_pos;
-                }
+                p->real_w_pos += p->_write(data->data, data->len);
             }
             data.reset();
         };
@@ -329,6 +318,7 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
                     exe_write();
                 }
                 p->t_flush_ctl = false;
+                p->cv.notify_one();
             }
             // LOG_F(INFO, "Write Start!");
             // std::this_thread::yield();
@@ -750,7 +740,14 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
     }
 
     virtual void close_write() override {
+        using namespace std::chrono_literals;
+        t_flush_ctl = true;
         flush();
+        std::unique_lock<std::mutex> lock(t_m);
+        cv.wait_for(lock, 10s, [this] {
+            return !t_flush_ctl;
+        });
+        t_stop_ctl = true;
 #ifdef _WIN32
         // Windows平台：关闭写入管道的句柄
         if (hWritePipeIn != nullptr) {

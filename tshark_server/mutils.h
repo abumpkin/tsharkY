@@ -229,6 +229,7 @@ inline std::string const utils_ip2region(std::string ip) {
     std::string result;
     size_t start = 0;
     size_t end = ret.find('|');
+    // uint32_t size = 0;
 
     // 预分配内存优化拼接
     result.reserve(ret.size()); // 预分配足够的内存
@@ -237,16 +238,17 @@ inline std::string const utils_ip2region(std::string ip) {
         if (start != end) { // 避免空字符串
             if (!result.empty()) result += '-';
             result.append(ret, start, end - start);
+            // size++;
         }
         start = end + 1;
         end = ret.find('|', start);
     }
 
     // 处理最后一个部分
-    if (start < ret.size()) {
-        if (!result.empty()) result += '-';
-        result.append(ret, start, ret.size() - start);
-    }
+    // if (start < ret.size()) {
+    //     if (!result.empty()) result += '-';
+    //     result.append(ret, start, ret.size() - start);
+    // }
 
     return result;
 }
@@ -780,19 +782,17 @@ inline std::string utils_convert_timestamp(const std::string &timestamp) {
     }
     // 处理毫秒部分（保证3位精度）
     std::string result;
-    std::string milisec;
     if (!millisStr.empty()) {
         // 取前3位并补零
-        size_t len = std::min(millisStr.size(), 3ull);
-        milisec += "." + millisStr.substr(0, len);
-        while (result.size() - result.find('.') - 1 < 3) {
-            milisec += "0";
+        while (millisStr.size() < 3) {
+            millisStr.insert(0, 1, '0');
         }
+        millisStr = "." + millisStr.substr(0, 3);
     }
     else {
-        milisec += ".000";
+        millisStr = ".000";
     }
-    result = fmt::format(buffer, milisec);
+    result = fmt::format(buffer, millisStr);
     // 移除strftime可能添加的换行符
     if (!result.empty() && result.back() == '\n') {
         result.pop_back();
