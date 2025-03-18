@@ -343,10 +343,10 @@ struct Packet : TsharkDataObj<Packet> {
     }
 
     inline static IP_PROTO_CODE get_ip_proto_code(const char *code) {
-        static const std::unordered_map<std::string, IP_PROTO_CODE>
-            ipProtoMap = {{"ICMP", ICMP}, {"IGMP", IGMP}, {"TCP", TCP},
-                {"UDP", UDP}, {"GRE", GRE}, {"ESP", ESP}, {"AH", AH},
-                {"EIGRP", EIGRP}, {"OSPF", OSPF}, {"SCTP", SCTP}};
+        static const std::unordered_map<std::string, IP_PROTO_CODE> ipProtoMap =
+            {{"ICMP", ICMP}, {"IGMP", IGMP}, {"TCP", TCP}, {"UDP", UDP},
+                {"GRE", GRE}, {"ESP", ESP}, {"AH", AH}, {"EIGRP", EIGRP},
+                {"OSPF", OSPF}, {"SCTP", SCTP}};
         if (ipProtoMap.count(code)) {
             return ipProtoMap.find(code)->second;
         }
@@ -381,9 +381,9 @@ struct Packet : TsharkDataObj<Packet> {
         pkt_obj.SetObject();
         pkt_obj.AddMember("idx", idx, allocator);
         // pkt_obj.AddMember("frame_number", frame_number, allocator);
+        std::string time = utils_convert_timestamp(frame_timestamp);
         pkt_obj.AddMember("frame_timestamp",
-            rapidjson::Value(frame_timestamp.c_str(), frame_timestamp.size()),
-            allocator);
+            rapidjson::Value(time.c_str(), allocator), allocator);
         pkt_obj.AddMember("frame_protocol",
             rapidjson::Value(frame_protocol.c_str(), frame_protocol.size()),
             allocator);
@@ -475,8 +475,16 @@ struct Session {
         ret.AddMember("trans_proto",
             rapidjson::Value(Packet::get_ip_proto_str(trans_proto), allocator),
             allocator);
-        ret.AddMember("start_time", start_time, allocator);
-        ret.AddMember("end_time", end_time, allocator);
+        ret.AddMember("start_time",
+            rapidjson::Value(
+                utils_convert_timestamp(std::to_string(start_time)).c_str(),
+                allocator),
+            allocator);
+        ret.AddMember("end_time",
+            rapidjson::Value(
+                utils_convert_timestamp(std::to_string(end_time)).c_str(),
+                allocator),
+            allocator);
         ret.AddMember("app_proto",
             rapidjson::Value(app_proto.c_str(), app_proto.size()), allocator);
         ret.AddMember("ip1_send_packets_count", ip1_send_packets, allocator);

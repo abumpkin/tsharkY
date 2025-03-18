@@ -21,6 +21,7 @@
  */
 
 #pragma once
+#include "fmt/format.h"
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
@@ -759,36 +760,39 @@ inline std::thread::native_handle_type utils_get_thread_handle() {
 #define LOCALTIME(dest, src) localtime_r(src, dest)
 #endif
 
-inline std::string utils_convert_timestamp(const std::string& timestamp) {
+inline std::string utils_convert_timestamp(const std::string &timestamp) {
     // 分割秒和毫秒部分
     size_t dotPos = timestamp.find('.');
     std::string secondsStr = timestamp.substr(0, dotPos);
-    std::string millisStr = (dotPos != std::string::npos) ?
-                           timestamp.substr(dotPos + 1) : "0";
+    std::string millisStr =
+        (dotPos != std::string::npos) ? timestamp.substr(dotPos + 1) : "0";
     // 转换为time_t类型
     time_t seconds = std::stoll(secondsStr);
     // 转换为本地时间结构
-    tm tm_time {};
+    tm tm_time{};
     if (LOCALTIME(&tm_time, &seconds) != 0) {
         return "Invalid time conversion";
     }
     // 格式化时间主体（包含时区偏移）
     char buffer[80];
-    if (!strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S %z", &tm_time)) {
+    if (!strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S{} %z", &tm_time)) {
         return "Formatting error";
     }
     // 处理毫秒部分（保证3位精度）
-    std::string result = buffer;
+    std::string result;
+    std::string milisec;
     if (!millisStr.empty()) {
         // 取前3位并补零
         size_t len = std::min(millisStr.size(), 3ull);
-        result += "." + millisStr.substr(0, len);
+        milisec += "." + millisStr.substr(0, len);
         while (result.size() - result.find('.') - 1 < 3) {
-            result += "0";
+            milisec += "0";
         }
-    } else {
-        result += ".000";
     }
+    else {
+        milisec += ".000";
+    }
+    result = fmt::format(buffer, milisec);
     // 移除strftime可能添加的换行符
     if (!result.empty() && result.back() == '\n') {
         result.pop_back();
