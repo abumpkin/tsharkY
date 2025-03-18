@@ -601,13 +601,18 @@ class TSharkManager {
                            ParserStreamPacket::Status st) {
             // 暂时无新数据包到达，提交事务
             if (st == ParserStreamPacket::Status::PKT_NONE) {
-                db->commit_transaction();
-                LOG_F(INFO, "Commit Transaction");
+                if (db->has_transaction()) {
+                    db->commit_transaction();
+                    // LOG_F(INFO, "Commit Transaction");
+                }
             }
             // 新数据包到达，进行分析、存储
             if (st == ParserStreamPacket::Status::PKT_ARRIVE) {
                 // 分析会话
-                session_analyzer->check_packet(*p);
+                auto sess = session_analyzer->check_packet(*p);
+                if (sess) {
+                    db->table_session->insert(sess);
+                }
                 // 开始事务(如果没有)
                 if (!db->has_transaction()) db->start_transaction();
                 // 插入数据到数据库
@@ -641,16 +646,16 @@ class TSharkManager {
                     FriendlyFileSize(
                         capture_thread.loader->in_stream->read_offset())
                         .c_str());
-                if (session_analyzer) {
-                    auto sessions = session_analyzer->get_sessions();
-                    if (sessions.p) {
-                        db->start_transaction();
-                        for (auto &i : *sessions) {
-                            db->table_session->insert(i);
-                        }
-                        db->commit_transaction();
-                    }
-                }
+                // if (session_analyzer) {
+                //     auto sessions = session_analyzer->get_sessions();
+                //     if (sessions.p) {
+                //         db->start_transaction();
+                //         for (auto &i : *sessions) {
+                //             db->table_session->insert(i);
+                //         }
+                //         db->commit_transaction();
+                //     }
+                // }
             }
         };
     }

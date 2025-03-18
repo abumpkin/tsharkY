@@ -26,6 +26,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <ctime>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -749,4 +750,48 @@ inline std::thread::native_handle_type utils_get_thread_handle() {
 #else
     return pthread_self(); // Linux
 #endif
+}
+
+// 平台相关的localtime函数封装
+#ifdef _WIN32
+#define LOCALTIME(dest, src) localtime_s(dest, src)
+#else
+#define LOCALTIME(dest, src) localtime_r(src, dest)
+#endif
+
+inline std::string utils_convert_timestamp(const std::string& timestamp) {
+    // 分割秒和毫秒部分
+    size_t dotPos = timestamp.find('.');
+    std::string secondsStr = timestamp.substr(0, dotPos);
+    std::string millisStr = (dotPos != std::string::npos) ?
+                           timestamp.substr(dotPos + 1) : "0";
+    // 转换为time_t类型
+    time_t seconds = std::stoll(secondsStr);
+    // 转换为本地时间结构
+    tm tm_time {};
+    if (LOCALTIME(&tm_time, &seconds) != 0) {
+        return "Invalid time conversion";
+    }
+    // 格式化时间主体（包含时区偏移）
+    char buffer[80];
+    if (!strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S %z", &tm_time)) {
+        return "Formatting error";
+    }
+    // 处理毫秒部分（保证3位精度）
+    std::string result = buffer;
+    if (!millisStr.empty()) {
+        // 取前3位并补零
+        size_t len = std::min(millisStr.size(), 3ull);
+        result += "." + millisStr.substr(0, len);
+        while (result.size() - result.find('.') - 1 < 3) {
+            result += "0";
+        }
+    } else {
+        result += ".000";
+    }
+    // 移除strftime可能添加的换行符
+    if (!result.empty() && result.back() == '\n') {
+        result.pop_back();
+    }
+    return result;
 }

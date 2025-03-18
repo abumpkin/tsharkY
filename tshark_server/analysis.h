@@ -72,20 +72,23 @@ struct Analyzer {
             return std::make_shared<SessionAnalyzer>(SessionAnalyzer());
         }
 
-        void check_packet(Packet &packet) {
+        std::shared_ptr<Session> check_packet(Packet &packet) {
+            std::shared_ptr<Session> ret;
             if (packet.ip_proto_code == Packet::TCP ||
                 packet.ip_proto_code == Packet::UDP) {
                 std::unique_lock<std::shared_mutex> lock(mt);
-                auto sess = Session::create(packet);
-                if (sessions->count(sess)) {
-                    sessions->find(sess)->get()->update(packet);
+                ret = Session::create(packet);
+                if (sessions->count(ret)) {
+                    ret = *sessions->find(ret);
+                    ret->update(packet);
                 }
                 else {
-                    sess->session_id = sessions->size();
-                    sess->update(packet);
-                    sessions->emplace(sess);
+                    ret->session_id = sessions->size();
+                    ret->update(packet);
+                    sessions->emplace(ret);
                 }
             }
+            return ret;
         }
 
         rapidjson::Value to_json_obj(

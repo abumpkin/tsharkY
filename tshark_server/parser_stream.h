@@ -235,7 +235,7 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
             // packet->frame_number = strlen(cmd_field.frame_number)
             //                            ? std::stoi(cmd_field.frame_number)
             //                            : 0;
-            packet->frame_timestamp = cmd_field.frame_timestamp;
+            packet->frame_timestamp = utils_convert_timestamp(cmd_field.frame_timestamp);
             packet->frame_protocol = cmd_field.frame_protocol;
             packet->frame_info = cmd_field.frame_info;
             // MAC
