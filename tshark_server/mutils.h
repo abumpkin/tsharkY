@@ -28,13 +28,11 @@
 #include <cstdint>
 #include <cstdio>
 #include <ctime>
-#include <thread>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <loguru.hpp>
 #include <memory>
-#include <numeric>
 #include <optional>
 #include <queue>
 #include <rapidjson/document.h>
@@ -45,6 +43,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 #include <xdb_search.h>
@@ -52,6 +51,9 @@
 #ifdef __linux__
 #include <pthread.h>
 #include <sched.h>
+#include <sys/resource.h> // for setpriority, getpriority
+#include <sys/syscall.h>  // SYS_gettid
+#include <unistd.h>
 #endif
 
 #ifdef _WIN32
@@ -217,7 +219,7 @@ inline std::string const utils_ip2region(std::string ip) {
         LOG_F(INFO, "Ip Region Data: Load from file %s", path);
         auto xdb = std::make_unique<xdb_search_t>(path);
         xdb->init_content();
-        return std::move(xdb);
+        return xdb;
     }();
     ret = searcher->search(ip);
     // 提前返回条件检查
@@ -695,9 +697,16 @@ inline void ShowHex(char const *data, uint64_t len, int width = 32,
     }
 }
 
+inline std::thread::native_handle_type utils_get_thread_handle() {
+#ifdef _WIN32
+    return GetCurrentThread(); // Windows
+#else
+    return pthread_self(); // Linux
+#endif
+}
+
 // 正常优先级 = 7
-inline void utils_set_priority(
-    std::thread::native_handle_type handle, int priority) {
+inline void utils_set_priority(int priority) {
     // 确保优先级在 0-9 范围内
     if (priority < 0 || priority > 9) {
         std::cerr << "Priority must be between 0 and 9.\n";
@@ -727,35 +736,25 @@ inline void utils_set_priority(
         winPriority = THREAD_PRIORITY_HIGHEST;
     }
 
-    if (!SetThreadPriority(handle, winPriority)) {
+    if (!SetThreadPriority(utils_get_thread_handle(), winPriority)) {
         std::cerr << "Failed to set thread priority. Error: " << GetLastError()
                   << "\n";
     }
 #else
-    // Linux 平台
-    // 将 0-9 映射到 Linux 的实时优先级范围（1-99）
-    int linuxPriority = (priority * 10) + 1; // 映射到 1-99
-    if (linuxPriority > 99) {
-        linuxPriority = 99;
-    }
+    // nice 值范围（-20 到 19）
+    int niceValue = 20 - ((priority + 1) * 2);
+    if (niceValue < -19) niceValue = -20; // 确保不超过最小值
+    if (niceValue > 19) niceValue = 19;   // 确保不超过最大值
 
-    sched_param param;
-    param.sched_priority = linuxPriority;
+    // 获取线程的 TID（线程 ID）
+    pid_t tid = syscall(SYS_gettid);
 
-    if (pthread_setschedparam(handle, SCHED_FIFO, &param) != 0) {
-        std::cerr << "Failed to set thread priority.\n";
+    // 设置指定线程的 nice 值
+    if (setpriority(PRIO_PROCESS, tid, niceValue) != 0) {
+        perror("Failed to set thread priority");
     }
 #endif
 }
-
-inline std::thread::native_handle_type utils_get_thread_handle() {
-#ifdef _WIN32
-    return GetCurrentThread(); // Windows
-#else
-    return pthread_self(); // Linux
-#endif
-}
-
 
 inline std::string utils_convert_timestamp(const std::string &timestamp) {
     // 分割秒和毫秒部分

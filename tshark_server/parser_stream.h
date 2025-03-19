@@ -148,7 +148,7 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
 
     // 解析线程
     static void thread(ParserStreamPacket *p) {
-        utils_set_priority(utils_get_thread_handle(), 6);
+        utils_set_priority(6);
         using namespace std::chrono_literals;
         uint32_t idx = 0;
         std::string explain;

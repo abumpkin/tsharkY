@@ -92,7 +92,7 @@ struct SharkLoader {
 
     public:
     virtual bool load(ParserStreams const &ps) {
-        utils_set_priority(utils_get_thread_handle(), 9);
+        utils_set_priority(9);
         stop_ctl = false;
         if (!this->parser_stream) {
             this->parser_stream = this->in_stream;

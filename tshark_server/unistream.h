@@ -291,7 +291,7 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
     bool t_stop_ctl, t_flush_ctl;
     StreamBuf<4096, 1000> write_buffer;
     static void write_thread(UniStreamDualPipeU *p) {
-        utils_set_priority(utils_get_thread_handle(), 6);
+        utils_set_priority(6);
         using namespace std::chrono_literals;
         p->real_w_pos = 0;
         auto exe_write = [&]() {
@@ -446,6 +446,7 @@ class UniStreamDualPipeU : virtual public UniStreamInterface {
         }
         CloseHandle(read_con_ctx.hEvent);
 #else
+        np_placeholder.clear();
         // Linux平台
         int stdoutPipe[2];
         int stdinPipe[2];
