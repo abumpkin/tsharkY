@@ -261,8 +261,8 @@ struct PacketDefineDecode : TsharkDataObj<PacketDefineDecode> {
         do {
             PacketDefineDecode::Field x_field;
             x_attr = cur.attribute("name");
-
             if (x_attr) x_field.name = x_attr.value();
+            if (x_field.name == "geninfo" || x_field.name == "frame") continue;
             x_attr = cur.attribute("showname");
             if (x_attr)
                 x_field.showname = FieldTranslator.trans(x_attr.value());

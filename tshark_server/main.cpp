@@ -10,6 +10,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstdint>
+#include <exception>
 #include <future>
 #include <loguru.hpp>
 #include <memory>
@@ -310,26 +311,27 @@ struct Controller : public oatpp::web::server::api::ApiController {
         }
     };
 
-    ENDPOINT_ASYNC("GET", "/capture/get/brief", capture_get_brief) {
-        ENDPOINT_ASYNC_INIT(capture_get_brief);
+    ENDPOINT_ASYNC("GET", "/capture/packet/brief", capture_packet_brief) {
+        ENDPOINT_ASYNC_INIT(capture_packet_brief);
         Action act() override {
             auto ret = DTO_Data::createShared();
             ret->code = ret->FAILURE;
-            ret->msg = "获取失败";
             std::unordered_map<std::string, std::string> params;
+            std::unique_ptr<std::vector<std::shared_ptr<Packet>>> data;
             try {
                 for (auto &i : request->getQueryParameters().getAll()) {
                     params[utils_url_decode(i.first.std_str())] =
                         utils_url_decode(i.second.std_str());
                 }
+                data = m.capture_get_brief(params);
             }
-            catch (...) {
+            catch (std::exception &e) {
+                ret->msg = e.what();
                 return _return(
                     controller->createDtoResponse(Status::CODE_400, ret));
             }
             ret->code = ret->SUCCESS;
             ret->msg = "获取成功";
-            auto data = m.capture_get_brief(params);
             rapidjson::Value data_obj;
             rapidjson::MemoryPoolAllocator<> alloc;
             data_obj.SetArray();
@@ -343,20 +345,28 @@ struct Controller : public oatpp::web::server::api::ApiController {
         }
     };
 
-    ENDPOINT_ASYNC("GET", "/capture/get/brief/total", capture_get_brief_total) {
-        ENDPOINT_ASYNC_INIT(capture_get_brief_total);
+    ENDPOINT_ASYNC("GET", "/capture/packet/total", capture_get_total) {
+        ENDPOINT_ASYNC_INIT(capture_get_total);
         Action act() override {
             auto ret = DTO_Data::createShared();
+            ret->code = ret->FAILURE;
+            try {
+                ret->size = m.capture_get_brief_total();
+            }
+            catch (std::exception &e) {
+                ret->msg = e.what();
+                return _return(
+                    controller->createDtoResponse(Status::CODE_400, ret));
+            }
             ret->code = ret->SUCCESS;
             ret->msg = "获取成功";
-            ret->size = m.capture_get_brief_total();
             return _return(
                 controller->createDtoResponse(Status::CODE_200, ret));
         }
     };
 
-    ENDPOINT_ASYNC("GET", "/capture/get/raw", capture_get_raw) {
-        ENDPOINT_ASYNC_INIT(capture_get_raw);
+    ENDPOINT_ASYNC("GET", "/capture/packet/raw", capture_packet_raw) {
+        ENDPOINT_ASYNC_INIT(capture_packet_raw);
         Action act() override {
             auto ret = DTO_Data::createShared();
             ret->code = ret->FAILURE;
@@ -365,41 +375,42 @@ struct Controller : public oatpp::web::server::api::ApiController {
             try {
                 idx = std::stoul(
                     utils_url_decode(request->getQueryParameter("idx")));
+                auto data = m.capture_get_raw(idx);
+                ret->size = data->size();
+                ret->data = std::make_shared<std::string>(
+                    "\"" +
+                    oatpp::encoding::Base64::encode(
+                        data->data(), data->size()) +
+                    "\"");
             }
-            catch (...) {
+            catch (std::exception &e) {
+                ret->msg = e.what();
                 return _return(
                     controller->createDtoResponse(Status::CODE_400, ret));
             }
-            auto data = m.capture_get_raw(idx);
             ret->code = ret->SUCCESS;
             ret->msg = "获取成功";
-            ret->size = data->size();
-            ret->data = std::make_shared<std::string>(
-                "\"" +
-                oatpp::encoding::Base64::encode(data->data(), data->size()) +
-                "\"");
             return _return(
                 controller->createDtoResponse(Status::CODE_200, ret));
         }
     };
 
-    ENDPOINT_ASYNC("GET", "/capture/get/detail", capture_get_detail) {
-        ENDPOINT_ASYNC_INIT(capture_get_detail);
+    ENDPOINT_ASYNC("GET", "/capture/packet/detail", capture_packet_detail) {
+        ENDPOINT_ASYNC_INIT(capture_packet_detail);
         Action act() override {
             auto ret = DTO_Data::createShared();
             ret->code = ret->FAILURE;
-            ret->msg = "获取失败";
             uint32_t pos;
             try {
                 pos = std::stoul(request->getQueryParameter("idx", ""));
+                ret->data =
+                    std::make_shared<std::string>(m.capture_get_detail(pos));
             }
-            catch (...) {
+            catch (std::exception &e) {
+                ret->msg = e.what();
                 return _return(
                     controller->createDtoResponse(Status::CODE_400, ret));
             }
-
-            ret->data =
-                std::make_shared<std::string>(m.capture_get_detail(pos));
             if (!ret->data->empty()) {
                 ret->code = ret->SUCCESS;
                 ret->msg = "获取成功";
@@ -410,8 +421,8 @@ struct Controller : public oatpp::web::server::api::ApiController {
         }
     };
 
-    ENDPOINT_ASYNC("GET", "/capture/get/sessions", capture_get_sessions) {
-        ENDPOINT_ASYNC_INIT(capture_get_sessions);
+    ENDPOINT_ASYNC("GET", "/capture/sessions", capture_sessions) {
+        ENDPOINT_ASYNC_INIT(capture_sessions);
         Action act() override {
             auto ret = DTO_Data::createShared();
             ret->code = ret->FAILURE;
@@ -422,25 +433,24 @@ struct Controller : public oatpp::web::server::api::ApiController {
                     params[utils_url_decode(i.first.std_str())] =
                         utils_url_decode(i.second.std_str());
                 }
+                auto sessions = m.capture_get_sessions(params);
+                rapidjson::Value data_obj;
+                rapidjson::MemoryPoolAllocator<> alloc;
+                data_obj.SetArray();
+                for (auto &i : *sessions) {
+                    data_obj.PushBack(i->to_json_obj(alloc), alloc);
+                }
+                ret->data =
+                    std::make_shared<std::string>(utils_to_json(data_obj));
+                ret->size = sessions->size();
             }
-            catch (...) {
+            catch (std::exception &e) {
+                ret->msg = e.what();
                 return _return(
                     controller->createDtoResponse(Status::CODE_400, ret));
             }
-            auto sessions = m.capture_get_sessions(params);
-            rapidjson::Value data_obj;
-            rapidjson::MemoryPoolAllocator<> alloc;
-            data_obj.SetArray();
-            for (auto &i : *sessions) {
-                data_obj.PushBack(i->to_json_obj(alloc), alloc);
-            }
-            if (!sessions->empty()) {
-                ret->size = sessions->size();
-                ret->data =
-                    std::make_shared<std::string>(utils_to_json(data_obj));
-                ret->code = ret->SUCCESS;
-                ret->msg = "获取成功";
-            }
+            ret->code = ret->SUCCESS;
+            ret->msg = "获取成功";
             auto res = controller->createDtoResponse(Status::CODE_200, ret);
             return _return(res);
         }

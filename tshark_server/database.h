@@ -256,6 +256,7 @@ struct TsharkDB {
         std::unique_ptr<SQLite::Statement> stat_delete;
         std::unique_ptr<SQLite::Statement> stat_select_one;
         std::unique_ptr<SQLite::Statement> stat_select;
+        std::unique_ptr<SQLite::Statement> stat_rselect_one;
         std::unique_ptr<SQLite::Statement> stat_size;
         uint32_t total_count;
 
@@ -278,7 +279,7 @@ struct TsharkDB {
             p->dst_port = stat.getColumn(Fields.dst_port).getUInt();
             p->cap_off = stat.getColumn(Fields.cap_off).getUInt();
             p->cap_len = stat.getColumn(Fields.cap_len).getUInt();
-            p->cap_len = stat.getColumn(Fields.session_id).getUInt();
+            p->sess_idx = stat.getColumn(Fields.session_id).getUInt();
             auto data_col = stat.getColumn(Fields.data);
             p->data = std::make_unique<std::vector<char>>(
                 static_cast<const char *>(data_col.getBlob()),
@@ -364,11 +365,17 @@ struct TsharkDB {
                 (const char *)Fields.dst_port,       //
                 (const char *)Fields.dst_port,       //
                 (const char *)Fields.dst_port,       //
-                (const char *)Fields.cap_len,        //
-                (const char *)Fields.cap_len,        //
-                (const char *)Fields.cap_len         //
+                (const char *)Fields.session_id,     //
+                (const char *)Fields.session_id,     //
+                (const char *)Fields.session_id      //
             );
             stat_select = std::make_unique<SQLite::Statement>(*db, sql);
+            sql = R"(
+                SELECT * FROM {} WHERE idx < :{} ORDER BY {} DESC LIMIT 1
+            )";
+            sql = fmt::format(
+                sql, name, (int)Fields.idx, (const char *)Fields.idx);
+            stat_rselect_one = std::make_unique<SQLite::Statement>(*db, sql);
             sql = R"(
                 SELECT * FROM {} WHERE idx = :{}
             )";
@@ -471,6 +478,25 @@ struct TsharkDB {
                 LOG_F(ERROR, "ERROR: %s", e.what());
             }
             return 0;
+        }
+
+        std::shared_ptr<Packet> previous(
+            uint32_t idx, FixedDataTable &dbfixed) {
+            if (!stat_rselect_one) return nullptr;
+            auto db = con->get_db();
+            if (con->has_transaction()) con->commit_transaction();
+            try {
+                stat_rselect_one->reset();
+                stat_rselect_one->bind((int)Fields.idx, idx);
+                if (stat_rselect_one->executeStep()) {
+                    auto ret = compose_packet(*stat_rselect_one, dbfixed);
+                    return ret;
+                }
+            }
+            catch (std::exception &e) {
+                LOG_F(ERROR, "ERROR: %s", e.what());
+            }
+            return nullptr;
         }
 
         std::shared_ptr<Packet> select(uint32_t idx, FixedDataTable &dbfixed) {

@@ -28,21 +28,24 @@
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
-#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 struct Analyzer {
     static std::unique_ptr<PacketDefineDecode> packet_detail(
-        std::shared_ptr<Packet> pkt) {
+        std::shared_ptr<Packet> pkt, std::shared_ptr<Packet> prv_pkt) {
         std::string cmd = TSHARK_PATH " -Q -l -i - -T pdml";
         UniStreamDualPipeU analyzer{cmd, "-"};
         std::unique_ptr<PacketDefineDecode> dec;
+        if (!pkt) return nullptr;
         analyzer.write(pkt->fixed->data(), pkt->fixed->size());
-        if (pkt->data) analyzer.write(pkt->data->data(), pkt->data->size());
+        if (prv_pkt && prv_pkt->data)
+            analyzer.write(prv_pkt->data->data(), prv_pkt->data->size());
+        if (pkt->data)
+            analyzer.write(pkt->data->data(), pkt->data->size());
         analyzer.close_write();
         std::string xml = analyzer.read_until_eof();
-        auto pos = xml.find("<packet>");
+        auto pos = xml.rfind("<packet>");
         if (pos != std::string::npos) {
             xml = xml.substr(pos);
         }

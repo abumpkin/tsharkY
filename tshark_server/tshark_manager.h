@@ -30,11 +30,9 @@
 #include "tshark_info.h"
 #include "unistream.h"
 #include <atomic>
-#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
-#include <exception>
 #include <functional>
 #include <future>
 #include <initializer_list>
@@ -651,6 +649,14 @@ class TSharkManager {
         }
     }
 
+    bool check_db() {
+        if (!db) {
+            LOG_F(ERROR, "ERROR: Database init fail.");
+            return false;
+        }
+        return true;
+    }
+
     std::future<bool> capture_start(
         std::string const &if_name = "", std::filesystem::path save_to = "") {
         if (capture_is_running())
@@ -681,24 +687,31 @@ class TSharkManager {
 
     std::unique_ptr<std::vector<std::shared_ptr<Packet>>> capture_get_brief(
         std::unordered_map<std::string, std::string> const &params) {
+        if (!check_db()) throw std::runtime_error("Database init fail.");
         auto ret = std::make_unique<std::vector<std::shared_ptr<Packet>>>(
             db->table_brief->select(params, *db->table_fixed));
         return ret;
     }
 
     uint32_t capture_get_brief_total() {
+        if (!check_db()) throw std::runtime_error("Database init fail.");
         return db->table_brief->size();
     }
 
     std::string capture_get_detail(uint32_t idx) {
+        if (!check_db()) throw std::runtime_error("Database init fail.");
         std::shared_ptr<Packet> p =
             db->table_brief->select(idx, *db->table_fixed);
+        std::shared_ptr<Packet> pp =
+            db->table_brief->previous(idx, *db->table_fixed);
         if (!p) return "";
-        std::unique_ptr<PacketDefineDecode> dec = Analyzer::packet_detail(p);
+        std::unique_ptr<PacketDefineDecode> dec =
+            Analyzer::packet_detail(p, pp);
         return dec->to_json();
     }
 
     std::unique_ptr<std::vector<char>> capture_get_raw(uint32_t idx) {
+        if (!check_db()) throw std::runtime_error("Database init fail.");
         std::shared_ptr<Packet> p =
             db->table_brief->select(idx, *db->table_fixed);
         if (!p) return nullptr;
@@ -707,6 +720,7 @@ class TSharkManager {
 
     std::unique_ptr<std::vector<std::shared_ptr<Session>>> capture_get_sessions(
         std::unordered_map<std::string, std::string> const &params) {
+        if (!check_db()) throw std::runtime_error("Database init fail.");
         return std::make_unique<std::vector<std::shared_ptr<Session>>>(
             db->table_session->select(params));
     }
