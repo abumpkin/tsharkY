@@ -695,6 +695,7 @@ inline void ShowHex(char const *data, uint64_t len, int width = 32,
         }
         dpos += width;
     }
+    std::cout.unsetf(std::ios::basefield | std::ios::adjustfield | std::ios::floatfield);
 }
 
 inline std::thread::native_handle_type utils_get_thread_handle() {

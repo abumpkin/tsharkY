@@ -1,6 +1,5 @@
 #include "mutils.h"
 #include "oatpp/core/async/Coroutine.hpp"
-#include "oatpp/core/utils/Binary.hpp"
 #include "oatpp/encoding/Base64.hpp"
 #include "oatpp/parser/json/mapping/Serializer.hpp"
 #include "rapidjson/allocators.h"

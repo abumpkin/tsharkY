@@ -92,6 +92,11 @@ function(load_3rd tar)
     endif()
 endfunction()
 
+# yaml-cpp
+set(YAML_CPP_BUILD_CONTRIB OFF CACHE BOOL "Enable yaml-cpp contrib in library")
+add_subdirectory(3rd/yaml-cpp)
+load_3rd(yaml-cpp)
+
 # fmt
 set(FMT_INSTALL OFF CACHE BOOL "Generate the install target.")
 set(FMT_OS ON CACHE BOOL "Include OS-specific APIs.")

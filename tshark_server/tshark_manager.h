@@ -689,7 +689,7 @@ class TSharkManager {
         std::unordered_map<std::string, std::string> const &params) {
         if (!check_db()) throw std::runtime_error("Database init fail.");
         auto ret = std::make_unique<std::vector<std::shared_ptr<Packet>>>(
-            db->table_brief->select(params, *db->table_fixed));
+            db->table_brief->select(params));
         return ret;
     }
 
@@ -701,9 +701,9 @@ class TSharkManager {
     std::string capture_get_detail(uint32_t idx) {
         if (!check_db()) throw std::runtime_error("Database init fail.");
         std::shared_ptr<Packet> p =
-            db->table_brief->select(idx, *db->table_fixed);
+            db->table_brief->select(idx);
         std::shared_ptr<Packet> pp =
-            db->table_brief->previous(idx, *db->table_fixed);
+            db->table_brief->previous(idx);
         if (!p) return "";
         std::unique_ptr<PacketDefineDecode> dec =
             Analyzer::packet_detail(p, pp);
@@ -713,7 +713,7 @@ class TSharkManager {
     std::unique_ptr<std::vector<char>> capture_get_raw(uint32_t idx) {
         if (!check_db()) throw std::runtime_error("Database init fail.");
         std::shared_ptr<Packet> p =
-            db->table_brief->select(idx, *db->table_fixed);
+            db->table_brief->select(idx);
         if (!p) return nullptr;
         return std::move(p->data);
     }

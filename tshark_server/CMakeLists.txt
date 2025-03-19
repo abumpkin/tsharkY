@@ -13,6 +13,7 @@ target_link_libraries(tshark_server PUBLIC
     pugixml-static
     SQLiteCpp
     fmt
+    yaml-cpp
 )
 if (WIN32)
     target_link_libraries(tshark_server PUBLIC

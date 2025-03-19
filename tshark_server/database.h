@@ -260,8 +260,7 @@ struct TsharkDB {
         std::unique_ptr<SQLite::Statement> stat_size;
         uint32_t total_count;
 
-        inline std::shared_ptr<Packet> compose_packet(
-            SQLite::Statement &stat, FixedDataTable &dbfixed) {
+        inline std::shared_ptr<Packet> compose_packet(SQLite::Statement &stat) {
             std::shared_ptr<Packet> p = std::make_shared<Packet>();
             p->idx = stat.getColumn(Fields.idx).getUInt();
             p->frame_timestamp =
@@ -285,7 +284,7 @@ struct TsharkDB {
                 static_cast<const char *>(data_col.getBlob()),
                 static_cast<const char *>(data_col.getBlob()) +
                     data_col.getBytes());
-            p->fixed = dbfixed.get_data();
+            p->fixed = con->table_fixed->get_data();
             return p;
         }
 
@@ -480,8 +479,7 @@ struct TsharkDB {
             return 0;
         }
 
-        std::shared_ptr<Packet> previous(
-            uint32_t idx, FixedDataTable &dbfixed) {
+        std::shared_ptr<Packet> previous(uint32_t idx) {
             if (!stat_rselect_one) return nullptr;
             auto db = con->get_db();
             if (con->has_transaction()) con->commit_transaction();
@@ -489,7 +487,7 @@ struct TsharkDB {
                 stat_rselect_one->reset();
                 stat_rselect_one->bind((int)Fields.idx, idx);
                 if (stat_rselect_one->executeStep()) {
-                    auto ret = compose_packet(*stat_rselect_one, dbfixed);
+                    auto ret = compose_packet(*stat_rselect_one);
                     return ret;
                 }
             }
@@ -499,7 +497,7 @@ struct TsharkDB {
             return nullptr;
         }
 
-        std::shared_ptr<Packet> select(uint32_t idx, FixedDataTable &dbfixed) {
+        std::shared_ptr<Packet> select(uint32_t idx) {
             if (!stat_select_one) return nullptr;
             auto db = con->get_db();
             if (con->has_transaction()) con->commit_transaction();
@@ -507,7 +505,7 @@ struct TsharkDB {
                 stat_select_one->reset();
                 stat_select_one->bind((int)Fields.idx, idx);
                 if (stat_select_one->executeStep()) {
-                    auto ret = compose_packet(*stat_select_one, dbfixed);
+                    auto ret = compose_packet(*stat_select_one);
                     return ret;
                 }
             }
@@ -518,7 +516,7 @@ struct TsharkDB {
         }
 
         std::vector<std::shared_ptr<Packet>> select(
-            uint32_t pos, uint32_t size, FixedDataTable &dbfixed) {
+            uint32_t pos, uint32_t size) {
             std::vector<std::shared_ptr<Packet>> ret;
             if (!stat_select) return ret;
             auto db = con->get_db();
@@ -529,7 +527,7 @@ struct TsharkDB {
                 stat_select->bind("@pos", pos);
                 stat_select->bind("@size", size);
                 while (stat_select->executeStep()) {
-                    ret.push_back(compose_packet(*stat_select, dbfixed));
+                    ret.push_back(compose_packet(*stat_select));
                 }
             }
             catch (std::exception &e) {
@@ -539,8 +537,7 @@ struct TsharkDB {
         }
 
         std::vector<std::shared_ptr<Packet>> select(
-            std::unordered_map<std::string, std::string> params,
-            FixedDataTable &dbfixed) {
+            std::unordered_map<std::string, std::string> params) {
             std::vector<std::shared_ptr<Packet>> ret;
             if (!stat_select) return ret;
             auto db = con->get_db();
@@ -578,7 +575,7 @@ struct TsharkDB {
                 }
                 LOG_F(INFO, "%s", stat_select->getExpandedSQL().c_str());
                 while (stat_select->executeStep()) {
-                    ret.push_back(compose_packet(*stat_select, dbfixed));
+                    ret.push_back(compose_packet(*stat_select));
                 }
             }
             catch (std::exception &e) {

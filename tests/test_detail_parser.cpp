@@ -6,6 +6,13 @@
 #include "unistream.h"
 #include <memory>
 
+void load() {
+    std::string file = "dump_data/pdml.xml";
+
+    std::string xml = UniStreamFile(file).read_until_eof();
+    PacketDefineDecode p(xml);
+    std::cout << p.to_json(true) << std::endl;
+}
 
 // 翻译：1342                         +542ms
 // 解析xml 不翻译：800                 +240ms

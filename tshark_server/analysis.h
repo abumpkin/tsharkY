@@ -21,15 +21,24 @@
  */
 
 #pragma once
+#include "fmt/format.h"
 #include "mutils.h"
 #include "rapidjson/document.h"
+#include "stream.h"
 #include "tshark_info.h"
 #include "unistream.h"
+#include "yaml-cpp/binary.h"
+#include "yaml-cpp/node/parse.h"
+#include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
+#include <stdexcept>
+#include <string>
 #include <unordered_set>
 #include <vector>
+#include <yaml-cpp/yaml.h>
 
 struct Analyzer {
     static std::unique_ptr<PacketDefineDecode> packet_detail(
@@ -41,8 +50,7 @@ struct Analyzer {
         analyzer.write(pkt->fixed->data(), pkt->fixed->size());
         if (prv_pkt && prv_pkt->data)
             analyzer.write(prv_pkt->data->data(), prv_pkt->data->size());
-        if (pkt->data)
-            analyzer.write(pkt->data->data(), pkt->data->size());
+        if (pkt->data) analyzer.write(pkt->data->data(), pkt->data->size());
         analyzer.close_write();
         std::string xml = analyzer.read_until_eof();
         auto pos = xml.rfind("<packet>");
@@ -109,4 +117,63 @@ struct Analyzer {
             return ProtectedObj(sessions, mt);
         }
     };
+
+    // -z follow,prot,mode,filter[,range]
+    struct DatastreamAnalyzer : TsharkDataObj<DatastreamAnalyzer> {
+        struct Peer : TsharkDataObj<Peer> {
+            uint32_t no;
+            std::string host;
+            uint32_t port;
+            Peer(uint32_t no, std::string host, uint32_t port)
+                : no(no), host(host), port(port) {}
+        };
+        struct Stream : TsharkDataObj<Stream> {
+            std::shared_ptr<Packet> pkt;
+            std::shared_ptr<Peer> peer;
+            std::shared_ptr<std::vector<char>> data;
+        };
+        std::vector<std::shared_ptr<Stream>> datastream;
+
+        DatastreamAnalyzer(
+            std::vector<std::shared_ptr<Packet>> &sess_pkts, std::string type) {
+            std::string cmd = TSHARK_PATH " -Q -l -i - -z follow,{},yaml,0";
+            cmd = fmt::format(cmd, type);
+            UniStreamDualPipeU analyzer{cmd, "-"};
+            if (sess_pkts.empty()) throw std::runtime_error("empty session.");
+            bool fixed = false;
+            for (auto &i : sess_pkts) {
+                if (i) {
+                    if (i->fixed && !fixed) {
+                        analyzer.write(i->fixed->data(), i->fixed->size());
+                        fixed = true;
+                    }
+                    if (fixed && i->data) {
+                        analyzer.write(i->data->data(), i->data->size());
+                    }
+                }
+            }
+            analyzer.close_write();
+            YAML::Node data = YAML::Load(analyzer.read_until_eof());
+            std::map<uint32_t, std::shared_ptr<Peer>> peers;
+            for (YAML::const_iterator it = data["peers"].begin();
+                it != data["peers"].end(); ++it) {
+                uint32_t no = (*it)["peer"].as<uint32_t>();
+                std::string host = (*it)["host"].as<std::string>();
+                uint32_t port = (*it)["port"].as<uint32_t>();
+                peers.emplace(no, std::make_shared<Peer>(Peer(no, host, port)));
+            }
+            for (YAML::const_iterator it = data["packets"].begin();
+                it != data["packets"].end(); ++it) {
+                std::shared_ptr<Stream> s = std::make_shared<Stream>();
+                s->peer = peers.at((*it)["peer"].as<uint32_t>());
+                s->pkt = sess_pkts[(*it)["packet"].as<uint32_t>() - 1];
+                YAML::Binary data = (*it)["data"].as<YAML::Binary>();
+                s->data = std::make_shared<std::vector<char>>(
+                    data.data(), data.data() + data.size());
+                datastream.push_back(s);
+            }
+        }
+    };
+
+    // -z flow,name,mode[,filter]
 };
