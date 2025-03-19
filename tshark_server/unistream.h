@@ -21,7 +21,6 @@
  */
 
 #pragma once
-#include "database.h"
 #include "mutils.h"
 #include "streambuf.h"
 #include <chrono>
@@ -31,30 +30,30 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <errhandlingapi.h>
 #include <fstream>
 #include <future>
-#include <handleapi.h>
 #include <ios>
 #include <iostream>
 #include <istream>
 #include <memory>
-#include <minwinbase.h>
-#include <minwindef.h>
 #include <mutex>
 #include <mutils.h>
-#include <namedpipeapi.h>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
-#include <winbase.h>
-#include <winnt.h>
 
 #ifdef _WIN32
+#include <winbase.h>
+#include <winnt.h>
 #include <shlwapi.h> // PathFindOnPath
 #include <windows.h>
+#include <errhandlingapi.h>
+#include <handleapi.h>
+#include <minwinbase.h>
+#include <minwindef.h>
+#include <namedpipeapi.h>
 #else
 #include <fcntl.h>
 #include <sys/wait.h>

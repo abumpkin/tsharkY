@@ -41,7 +41,7 @@
             "preLaunchTask": "生成 tshark_server",
         },
         {
-            "type": "lldb-dap",
+            "type": "lldb",
             "request": "launch",
             "name": "tshark_server",
             "program": "${workspaceFolder}${/}build${/}tshark_server${/}tshark_server",

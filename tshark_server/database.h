@@ -21,7 +21,6 @@
  */
 
 #pragma once
-#include <fmt/core.h>
 #include "SQLiteCpp/Database.h"
 #include "SQLiteCpp/Savepoint.h"
 #include "SQLiteCpp/Statement.h"
@@ -32,7 +31,7 @@
 #include <cstdint>
 #include <exception>
 #include <filesystem>
-#include <loguru.hpp>
+#include <fmt/core.h>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>

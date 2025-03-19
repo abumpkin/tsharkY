@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <ctime>
+#include <thread>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -82,8 +83,8 @@ inline std::string utils_exec_cmd(const std::string &cmd) {
     return out;
 }
 #else
-inline class {
-} WIN_UTF8;
+// inline class {
+// } WIN_UTF8;
 
 inline std::string const utils_exec_cmd(std::string const &cmd) {
     std::string out;
@@ -755,12 +756,6 @@ inline std::thread::native_handle_type utils_get_thread_handle() {
 #endif
 }
 
-// 平台相关的localtime函数封装
-#ifdef _WIN32
-#define LOCALTIME(dest, src) localtime_s(dest, src)
-#else
-#define LOCALTIME(dest, src) localtime_r(src, dest)
-#endif
 
 inline std::string utils_convert_timestamp(const std::string &timestamp) {
     // 分割秒和毫秒部分
@@ -771,17 +766,25 @@ inline std::string utils_convert_timestamp(const std::string &timestamp) {
     // 转换为time_t类型
     time_t seconds = std::stoll(secondsStr);
     // 转换为本地时间结构
+    // 平台相关的localtime函数封装
     tm tm_time{};
-    if (LOCALTIME(&tm_time, &seconds) != 0) {
+#ifdef _WIN32
+    if (localtime_s(&tm_time, &seconds) != 0) {
         return "Invalid time conversion";
     }
+#else
+    if (localtime_r(&seconds, &tm_time) == nullptr) {
+        return "Invalid time conversion";
+    }
+#endif
+
     // 格式化时间主体（包含时区偏移）
     char buffer[80];
     if (!strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S{} %z", &tm_time)) {
         return "Formatting error";
     }
     // 处理毫秒部分（保证3位精度）
-    std::string result;
+    std::string result = buffer;
     if (!millisStr.empty()) {
         // 取前3位并补零
         while (millisStr.size() < 3) {
@@ -792,7 +795,7 @@ inline std::string utils_convert_timestamp(const std::string &timestamp) {
     else {
         millisStr = ".000";
     }
-    result = fmt::format(buffer, millisStr);
+    result = fmt::format(result, millisStr);
     // 移除strftime可能添加的换行符
     if (!result.empty() && result.back() == '\n') {
         result.pop_back();

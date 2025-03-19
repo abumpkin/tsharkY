@@ -70,7 +70,7 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
     constexpr static const uint32_t CMD_FIELD_NUM =
         sizeof(CMD_Fields) / sizeof(char const *);
     using PacketHandler = std::function<void(std::shared_ptr<Packet>, Status)>;
-    static const uint32_t MAX_QUEUE = 65535;
+    constexpr static const uint32_t MAX_QUEUE = 65535;
     std::weak_ptr<std::vector<char>> fixed;
     std::queue<std::shared_ptr<Packet>> packets_pending;
     volatile std::atomic_bool stop_ctl;
@@ -208,7 +208,8 @@ struct ParserStreamPacket : ParserStream, UniStreamDualPipeU {
                         p->write_buffer.block_count(),       //
                         // FriendlyFileSize(buf_speed),
                         FriendlyFileSize(parse_speed).c_str(),
-                        p->packets_pending.size(), MAX_QUEUE,     //[]
+                        p->packets_pending.size(),
+                        ParserStreamPacket::MAX_QUEUE,            //[]
                         FriendlyFileSize(parse_buf_size).c_str(), //
                         FriendlyFileSize(parse_buf_speed).c_str(), pkt_speed,
                         total_pkt)
