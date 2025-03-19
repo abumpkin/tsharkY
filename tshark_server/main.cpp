@@ -1,5 +1,7 @@
 #include "mutils.h"
 #include "oatpp/core/async/Coroutine.hpp"
+#include "oatpp/core/utils/Binary.hpp"
+#include "oatpp/encoding/Base64.hpp"
 #include "oatpp/parser/json/mapping/Serializer.hpp"
 #include "rapidjson/allocators.h"
 #include "rapidjson/document.h"
@@ -338,6 +340,46 @@ struct Controller : public oatpp::web::server::api::ApiController {
             ret->data = std::make_shared<std::string>(utils_to_json(data_obj));
             auto res = controller->createDtoResponse(Status::CODE_200, ret);
             return _return(res);
+        }
+    };
+
+    ENDPOINT_ASYNC("GET", "/capture/get/brief/total", capture_get_brief_total) {
+        ENDPOINT_ASYNC_INIT(capture_get_brief_total);
+        Action act() override {
+            auto ret = DTO_Data::createShared();
+            ret->code = ret->SUCCESS;
+            ret->msg = "获取成功";
+            ret->size = m.capture_get_brief_total();
+            return _return(
+                controller->createDtoResponse(Status::CODE_200, ret));
+        }
+    };
+
+    ENDPOINT_ASYNC("GET", "/capture/get/raw", capture_get_raw) {
+        ENDPOINT_ASYNC_INIT(capture_get_raw);
+        Action act() override {
+            auto ret = DTO_Data::createShared();
+            ret->code = ret->FAILURE;
+            ret->msg = "获取失败";
+            uint32_t idx = 0;
+            try {
+                idx = std::stoul(
+                    utils_url_decode(request->getQueryParameter("idx")));
+            }
+            catch (...) {
+                return _return(
+                    controller->createDtoResponse(Status::CODE_400, ret));
+            }
+            auto data = m.capture_get_raw(idx);
+            ret->code = ret->SUCCESS;
+            ret->msg = "获取成功";
+            ret->size = data->size();
+            ret->data = std::make_shared<std::string>(
+                "\"" +
+                oatpp::encoding::Base64::encode(data->data(), data->size()) +
+                "\"");
+            return _return(
+                controller->createDtoResponse(Status::CODE_200, ret));
         }
     };
 

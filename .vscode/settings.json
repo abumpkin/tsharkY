@@ -13,5 +13,6 @@
         "editor.suggest.insertMode": "replace"
     },
     "terminal.integrated.scrollback": 10000,
-    "clangd.trace": ".cache/trace.log"
+    "clangd.trace": ".cache/trace.log",
+    "cSpell.diagnosticLevel": "Hint"
 }

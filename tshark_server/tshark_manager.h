@@ -698,6 +698,13 @@ class TSharkManager {
         return dec->to_json();
     }
 
+    std::unique_ptr<std::vector<char>> capture_get_raw(uint32_t idx) {
+        std::shared_ptr<Packet> p =
+            db->table_brief->select(idx, *db->table_fixed);
+        if (!p) return nullptr;
+        return std::move(p->data);
+    }
+
     std::unique_ptr<std::vector<std::shared_ptr<Session>>> capture_get_sessions(
         std::unordered_map<std::string, std::string> const &params) {
         return std::make_unique<std::vector<std::shared_ptr<Session>>>(
