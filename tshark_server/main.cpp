@@ -33,6 +33,7 @@
 #include <oatpp/web/server/api/ApiController.hpp>
 #include <oatpp/web/server/interceptor/RequestInterceptor.hpp>
 #include <oatpp/web/server/interceptor/ResponseInterceptor.hpp>
+#include <stdexcept>
 #include <string>
 #include <sys/types.h>
 #include <unordered_map>
@@ -512,6 +513,42 @@ struct Controller : public oatpp::web::server::api::ApiController {
                 Analyzer::CountryStatistic stat(*m.capture_get_sessions({}));
                 ret->size = stat.infos.size();
                 ret->data = std::make_shared<std::string>(stat.to_json());
+            }
+            catch (std::exception &e) {
+                ret->msg = e.what();
+                return _return(
+                    controller->createDtoResponse(Status::CODE_400, ret));
+            }
+            ret->code = ret->SUCCESS;
+            ret->msg = "获取成功";
+            auto res = controller->createDtoResponse(Status::CODE_200, ret);
+            return _return(res);
+        }
+    };
+
+    ENDPOINT_ASYNC("GET", "/datastream", datastream) {
+        ENDPOINT_ASYNC_INIT(datastream);
+        Action act() override {
+            auto ret = DTO_Data::createShared();
+            ret->code = ret->FAILURE;
+            ret->msg = "获取失败";
+            uint32_t sessid;
+            try {
+                sessid =
+                    std::stoul(request->getQueryParameter("session_id", "-1"));
+                auto sess = m.capture_get_sessions(
+                    {{"session_id", std::to_string(sessid)}});
+                if (sessid == -1u || sess->empty()) {
+                    throw std::runtime_error("错误的会话 id!");
+                }
+                auto pkts = m.capture_get_brief(
+                    {{"session_id", std::to_string(sessid)}});
+                std::string type =
+                    Packet::get_ip_proto_str(sess->at(0)->trans_proto);
+                type = utils_str_lowcase(type);
+                Analyzer::DatastreamAnalyzer ds(*pkts, type);
+                ret->size = ds.datastream.size();
+                ret->data = std::make_shared<std::string>(ds.to_json());
             }
             catch (std::exception &e) {
                 ret->msg = e.what();

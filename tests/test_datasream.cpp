@@ -31,6 +31,7 @@ int main() {
             std::cout << i->peer->port << std::endl;
             ShowHex(i->data->data(), i->data->size());
         }
+        std::cout << ds.to_json(true) << std::endl;
     }
     return 0;
 }

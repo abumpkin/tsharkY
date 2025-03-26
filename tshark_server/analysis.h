@@ -283,8 +283,7 @@ struct Analyzer {
                     std::string proto =
                         Packet::get_ip_proto_str(i->trans_proto);
                     if (!infos.count(proto))
-                        infos.emplace(
-                            proto, std::make_shared<ProtoInfo>());
+                        infos.emplace(proto, std::make_shared<ProtoInfo>());
                     p = infos[proto];
                     if (p->protocol.empty()) p->protocol = proto;
                     p->total_packets += i->packet_count;
@@ -294,8 +293,7 @@ struct Analyzer {
                 if (!i->app_proto.empty()) {
                     std::string proto = i->app_proto;
                     if (!infos.count(proto))
-                        infos.emplace(
-                            proto, std::make_shared<ProtoInfo>());
+                        infos.emplace(proto, std::make_shared<ProtoInfo>());
                     p = infos[proto];
                     if (p->protocol.empty()) p->protocol = proto;
                     p->total_packets += i->packet_count;
@@ -383,13 +381,43 @@ struct Analyzer {
             uint32_t port;
             Peer(uint32_t no, std::string host, uint32_t port)
                 : no(no), host(host), port(port) {}
+            rapidjson::Value to_json_obj(
+                rapidjson::MemoryPoolAllocator<> &allocator) const {
+                rapidjson::Value ret;
+                ret.SetObject();
+                ret.AddMember("no", no, allocator);
+                ret.AddMember("host",
+                    rapidjson::Value(host.c_str(), host.size()), allocator);
+                ret.AddMember("port", port, allocator);
+                return ret;
+            }
         };
         struct Stream : TsharkDataObj<Stream> {
             std::shared_ptr<Packet> pkt;
             std::shared_ptr<Peer> peer;
             std::shared_ptr<std::vector<char>> data;
+            rapidjson::Value to_json_obj(
+                rapidjson::MemoryPoolAllocator<> &allocator) const {
+                rapidjson::Value ret;
+                ret.SetObject();
+                ret.AddMember("peer", peer->to_json_obj(allocator), allocator);
+                std::string data_hex = utils_data_to_hex(*data);
+                ret.AddMember("hex_size", data->size(), allocator);
+                ret.AddMember("hex_data",
+                    rapidjson::Value(data_hex.data(), allocator), allocator);
+                return ret;
+            }
         };
         std::vector<std::shared_ptr<Stream>> datastream;
+        rapidjson::Value to_json_obj(
+            rapidjson::MemoryPoolAllocator<> &allocator) const {
+            rapidjson::Value ret;
+            ret.SetArray();
+            for (auto &i : datastream) {
+                ret.PushBack(i->to_json_obj(allocator), allocator);
+            }
+            return ret;
+        }
 
         DatastreamAnalyzer(
             std::vector<std::shared_ptr<Packet>> &sess_pkts, std::string type) {
