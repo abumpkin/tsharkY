@@ -24,11 +24,11 @@
 #include "fmt/format.h"
 #include "mutils.h"
 #include "rapidjson/document.h"
-#include "stream.h"
 #include "tshark_info.h"
 #include "unistream.h"
 #include "yaml-cpp/binary.h"
 #include "yaml-cpp/node/parse.h"
+#include <cmath>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -36,6 +36,7 @@
 #include <shared_mutex>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include <yaml-cpp/yaml.h>
@@ -115,6 +116,262 @@ struct Analyzer {
         ProtectedObj<std::unordered_set<std::shared_ptr<Session>>>
         get_sessions() {
             return ProtectedObj(sessions, mt);
+        }
+    };
+
+    struct IpStatistic : TsharkDataObj<IpStatistic> {
+        struct IpInfo : TsharkDataObj<IpInfo> {
+            std::string ip;
+            std::string location;
+            double earliest_time;
+            double latest_time;
+            std::set<uint16_t> ports;
+            std::set<std::string> trans_protos;
+            std::set<std::string> app_protos;
+            uint32_t total_sent_packets;
+            uint32_t total_sent_bytes;
+            uint32_t total_recv_packets;
+            uint32_t total_recv_bytes;
+            uint32_t tcp_sessions_count;
+            uint32_t udp_sessions_count;
+
+            rapidjson::Value to_json_obj(
+                rapidjson::MemoryPoolAllocator<> &allocator) const {
+                rapidjson::Value ret;
+                ret.SetObject();
+                ret.AddMember(
+                    "ip", rapidjson::Value(ip.c_str(), ip.size()), allocator);
+                ret.AddMember("location",
+                    rapidjson::Value(location.c_str(), location.size()),
+                    allocator);
+                ret.AddMember("earliest_time", earliest_time, allocator);
+                ret.AddMember("latest_time", latest_time, allocator);
+                rapidjson::Value ports_array;
+                ports_array.SetArray();
+                for (auto &i : ports) {
+                    ports_array.PushBack(i, allocator);
+                }
+                ret.AddMember("ports", ports_array, allocator);
+                rapidjson::Value trans_protos_array;
+                trans_protos_array.SetArray();
+                for (auto &i : trans_protos) {
+                    trans_protos_array.PushBack(
+                        rapidjson::Value(i.c_str(), i.size()), allocator);
+                }
+                ret.AddMember("trans_protos", trans_protos_array, allocator);
+                rapidjson::Value app_protos_array;
+                app_protos_array.SetArray();
+                for (auto &i : app_protos) {
+                    app_protos_array.PushBack(
+                        rapidjson::Value(i.c_str(), i.size()), allocator);
+                }
+                ret.AddMember("app_protos", app_protos_array, allocator);
+                ret.AddMember(
+                    "total_sent_packets", total_sent_packets, allocator);
+                ret.AddMember("total_sent_bytes", total_sent_bytes, allocator);
+                ret.AddMember(
+                    "total_recv_packets", total_recv_packets, allocator);
+                ret.AddMember(
+                    "total_recv_packets", total_recv_packets, allocator);
+                ret.AddMember(
+                    "tcp_sessions_count", tcp_sessions_count, allocator);
+                ret.AddMember(
+                    "udp_sessions_count", udp_sessions_count, allocator);
+                return ret;
+            }
+        };
+        std::unordered_map<std::string, std::shared_ptr<IpInfo>> infos;
+        rapidjson::Value to_json_obj(
+            rapidjson::MemoryPoolAllocator<> &allocator) const {
+            rapidjson::Value ret;
+            ret.SetArray();
+            for (auto &i : infos) {
+                ret.PushBack(i.second->to_json_obj(allocator), allocator);
+            }
+            return ret;
+        }
+
+        IpStatistic(std::vector<std::shared_ptr<Session>> &s) {
+            for (auto &i : s) {
+                if (!infos.count(i->ip1))
+                    infos.emplace(i->ip1, std::make_shared<IpInfo>());
+                if (!infos.count(i->ip2))
+                    infos.emplace(i->ip2, std::make_shared<IpInfo>());
+                std::shared_ptr<IpInfo> p;
+                p = infos[i->ip1];
+                p->ip = i->ip1;
+                p->location = i->ip1_location;
+                if (p->earliest_time == 0) p->earliest_time = i->start_time;
+                if (i->start_time < p->earliest_time)
+                    p->earliest_time = i->start_time;
+                if (p->latest_time == 0) p->latest_time = i->end_time;
+                if (i->end_time > p->latest_time) p->latest_time = i->end_time;
+                p->ports.emplace(i->ip1_port);
+                p->trans_protos.emplace(
+                    Packet::get_ip_proto_str(i->trans_proto));
+                p->app_protos.emplace(i->app_proto);
+                p->total_sent_packets += i->ip1_send_packets;
+                p->total_sent_bytes += i->ip1_send_bytes;
+                p->total_recv_packets += i->ip2_send_packets;
+                p->total_recv_bytes += i->ip2_send_bytes;
+                if (i->trans_proto == Packet::TCP) p->tcp_sessions_count++;
+                if (i->trans_proto == Packet::UDP) p->udp_sessions_count++;
+                p = infos[i->ip2];
+                p->ip = i->ip2;
+                p->location = i->ip2_location;
+                if (p->earliest_time == 0) p->earliest_time = i->start_time;
+                if (i->start_time < p->earliest_time)
+                    p->earliest_time = i->start_time;
+                if (p->latest_time == 0) p->latest_time = i->end_time;
+                if (i->end_time > p->latest_time) p->latest_time = i->end_time;
+                p->ports.emplace(i->ip2_port);
+                p->trans_protos.emplace(
+                    Packet::get_ip_proto_str(i->trans_proto));
+                p->app_protos.emplace(i->app_proto);
+                p->total_sent_packets += i->ip2_send_packets;
+                p->total_sent_bytes += i->ip2_send_bytes;
+                p->total_recv_packets += i->ip1_send_packets;
+                p->total_recv_bytes += i->ip1_send_bytes;
+                if (i->trans_proto == Packet::TCP) p->tcp_sessions_count++;
+                if (i->trans_proto == Packet::UDP) p->udp_sessions_count++;
+            }
+        }
+    };
+
+    struct ProtoStatistic : TsharkDataObj<ProtoStatistic> {
+        struct ProtoInfo : TsharkDataObj<ProtoInfo> {
+            std::string protocol;
+            uint32_t total_packets;
+            uint32_t total_bytes;
+            std::unordered_set<std::shared_ptr<Session>> sessions;
+            const char *description;
+            rapidjson::Value to_json_obj(
+                rapidjson::MemoryPoolAllocator<> &allocator) const {
+                rapidjson::Value ret;
+                ret.SetObject();
+                ret.AddMember("protocol",
+                    rapidjson::Value(protocol.c_str(), protocol.size()),
+                    allocator);
+                ret.AddMember("total_packets", total_packets, allocator);
+                ret.AddMember("total_bytes", total_bytes, allocator);
+                ret.AddMember("session_count", sessions.size(), allocator);
+                if (description)
+                    ret.AddMember("description",
+                        rapidjson::Value(description, std::strlen(description)),
+                        allocator);
+                else
+                    ret.AddMember("description",
+                        rapidjson::Value("", allocator), allocator);
+                return ret;
+            }
+        };
+        std::unordered_map<std::string, std::shared_ptr<ProtoInfo>> infos;
+        rapidjson::Value to_json_obj(
+            rapidjson::MemoryPoolAllocator<> &allocator) const {
+            rapidjson::Value ret;
+            ret.SetArray();
+            for (auto &i : infos) {
+                ret.PushBack(i.second->to_json_obj(allocator), allocator);
+            }
+            return ret;
+        }
+
+        ProtoStatistic(std::vector<std::shared_ptr<Session>> &s) {
+            for (auto &i : s) {
+                std::shared_ptr<ProtoInfo> p;
+                if (Packet::get_ip_proto_str(i->trans_proto)) {
+                    std::string proto =
+                        Packet::get_ip_proto_str(i->trans_proto);
+                    if (!infos.count(proto))
+                        infos.emplace(
+                            proto, std::make_shared<ProtoInfo>());
+                    p = infos[proto];
+                    if (p->protocol.empty()) p->protocol = proto;
+                    p->total_packets += i->packet_count;
+                    p->total_bytes += i->total_bytes;
+                    p->sessions.emplace(i);
+                }
+                if (!i->app_proto.empty()) {
+                    std::string proto = i->app_proto;
+                    if (!infos.count(proto))
+                        infos.emplace(
+                            proto, std::make_shared<ProtoInfo>());
+                    p = infos[proto];
+                    if (p->protocol.empty()) p->protocol = proto;
+                    p->total_packets += i->packet_count;
+                    p->total_bytes += i->total_bytes;
+                    p->sessions.emplace(i);
+                }
+                if (p) {
+                    p->description = get_proto_description(p->protocol);
+                }
+            }
+        }
+    };
+
+    struct CountryStatistic : TsharkDataObj<CountryStatistic> {
+        struct CountryInfo : TsharkDataObj<CountryInfo> {
+            std::string country;
+            uint32_t total_packets;
+            uint32_t total_bytes;
+            std::unordered_set<std::string> ips;
+            std::unordered_set<std::shared_ptr<Session>> sessions;
+            rapidjson::Value to_json_obj(
+                rapidjson::MemoryPoolAllocator<> &allocator) const {
+                rapidjson::Value ret;
+                ret.SetObject();
+                ret.AddMember("country",
+                    rapidjson::Value(country.c_str(), country.size()),
+                    allocator);
+                rapidjson::Value ips_obj;
+                ips_obj.SetArray();
+                for (auto &i : ips) {
+                    ips_obj.PushBack(
+                        rapidjson::Value(i.c_str(), i.size()), allocator);
+                }
+                ret.AddMember("ips", ips_obj, allocator);
+                ret.AddMember("total_packets", total_packets, allocator);
+                ret.AddMember("total_bytes", total_bytes, allocator);
+                ret.AddMember("session_count", sessions.size(), allocator);
+                return ret;
+            }
+        };
+        std::unordered_map<std::string, std::shared_ptr<CountryInfo>> infos;
+        rapidjson::Value to_json_obj(
+            rapidjson::MemoryPoolAllocator<> &allocator) const {
+            rapidjson::Value ret;
+            ret.SetArray();
+            for (auto &i : infos) {
+                ret.PushBack(i.second->to_json_obj(allocator), allocator);
+            }
+            return ret;
+        }
+
+        CountryStatistic(std::vector<std::shared_ptr<Session>> &s) {
+            for (auto &i : s) {
+                std::shared_ptr<CountryInfo> p;
+                std::string country = utils_split_str(i->ip1_location, "-")[0];
+                if (!infos.count(country))
+                    infos.emplace(country, std::make_shared<CountryInfo>());
+                p = infos[country];
+                if (p->country.empty()) p->country = country;
+                p->ips.emplace(i->ip1);
+                p->sessions.emplace(i);
+                p->total_packets += i->ip1_send_packets + i->ip2_send_packets;
+                p->total_bytes += i->ip1_send_bytes + i->ip2_send_bytes;
+            }
+            for (auto &i : s) {
+                std::shared_ptr<CountryInfo> p;
+                std::string country = utils_split_str(i->ip2_location, "-")[0];
+                if (!infos.count(country))
+                    infos.emplace(country, std::make_shared<CountryInfo>());
+                p = infos[country];
+                if (p->country.empty()) p->country = country;
+                p->ips.emplace(i->ip2);
+                p->sessions.emplace(i);
+                p->total_packets += i->ip1_send_packets + i->ip2_send_packets;
+                p->total_bytes += i->ip1_send_bytes + i->ip2_send_bytes;
+            }
         }
     };
 

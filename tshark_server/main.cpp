@@ -1,3 +1,4 @@
+#include "analysis.h"
 #include "mutils.h"
 #include "oatpp/core/async/Coroutine.hpp"
 #include "oatpp/encoding/Base64.hpp"
@@ -442,6 +443,75 @@ struct Controller : public oatpp::web::server::api::ApiController {
                 ret->data =
                     std::make_shared<std::string>(utils_to_json(data_obj));
                 ret->size = sessions->size();
+            }
+            catch (std::exception &e) {
+                ret->msg = e.what();
+                return _return(
+                    controller->createDtoResponse(Status::CODE_400, ret));
+            }
+            ret->code = ret->SUCCESS;
+            ret->msg = "获取成功";
+            auto res = controller->createDtoResponse(Status::CODE_200, ret);
+            return _return(res);
+        }
+    };
+
+    ENDPOINT_ASYNC("GET", "/statistic/ip", statistic_ip) {
+        ENDPOINT_ASYNC_INIT(statistic_ip);
+        Action act() override {
+            auto ret = DTO_Data::createShared();
+            ret->code = ret->FAILURE;
+            ret->msg = "获取失败";
+            try {
+                Analyzer::IpStatistic stat(*m.capture_get_sessions({}));
+                ret->size = stat.infos.size();
+                ret->data = std::make_shared<std::string>(stat.to_json());
+            }
+            catch (std::exception &e) {
+                ret->msg = e.what();
+                return _return(
+                    controller->createDtoResponse(Status::CODE_400, ret));
+            }
+            ret->code = ret->SUCCESS;
+            ret->msg = "获取成功";
+            auto res = controller->createDtoResponse(Status::CODE_200, ret);
+            return _return(res);
+        }
+    };
+
+    ENDPOINT_ASYNC("GET", "/statistic/proto", statistic_proto) {
+        ENDPOINT_ASYNC_INIT(statistic_proto);
+        Action act() override {
+            auto ret = DTO_Data::createShared();
+            ret->code = ret->FAILURE;
+            ret->msg = "获取失败";
+            try {
+                Analyzer::ProtoStatistic stat(*m.capture_get_sessions({}));
+                ret->size = stat.infos.size();
+                ret->data = std::make_shared<std::string>(stat.to_json());
+            }
+            catch (std::exception &e) {
+                ret->msg = e.what();
+                return _return(
+                    controller->createDtoResponse(Status::CODE_400, ret));
+            }
+            ret->code = ret->SUCCESS;
+            ret->msg = "获取成功";
+            auto res = controller->createDtoResponse(Status::CODE_200, ret);
+            return _return(res);
+        }
+    };
+
+    ENDPOINT_ASYNC("GET", "/statistic/country", statistic_country) {
+        ENDPOINT_ASYNC_INIT(statistic_country);
+        Action act() override {
+            auto ret = DTO_Data::createShared();
+            ret->code = ret->FAILURE;
+            ret->msg = "获取失败";
+            try {
+                Analyzer::CountryStatistic stat(*m.capture_get_sessions({}));
+                ret->size = stat.infos.size();
+                ret->data = std::make_shared<std::string>(stat.to_json());
             }
             catch (std::exception &e) {
                 ret->msg = e.what();

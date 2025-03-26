@@ -81,19 +81,6 @@ struct TableFieldDefBase {
 };
 
 struct TsharkDB {
-    struct ProtectedDB : std::shared_lock<std::shared_mutex> {
-        TsharkDB *p;
-        ProtectedDB(TsharkDB *p, std::shared_mutex &mt)
-            : std::shared_lock<std::shared_mutex>(mt) {
-            this->p = p;
-        }
-        SQLite::Database *operator->() {
-            return p->db.get();
-        }
-        SQLite::Database &operator*() {
-            return *p->db;
-        }
-    };
 
     struct TableBase {
         TsharkDB *con;
