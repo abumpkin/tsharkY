@@ -3,3 +3,5 @@ test_data/temp.db3
 build
 note
 .cache
+frontend/dist
+frontend/node_modules
