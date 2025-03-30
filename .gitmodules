@@ -7,9 +7,6 @@
 [submodule "3rd/loguru"]
 	path = 3rd/loguru
 	url = https://github.com/emilk/loguru.git
-[submodule "3rd/oatpp"]
-	path = 3rd/oatpp
-	url = https://github.com/oatpp/oatpp.git
 [submodule "3rd/pugixml"]
 	path = 3rd/pugixml
 	url = https://github.com/zeux/pugixml.git
@@ -22,3 +19,6 @@
 [submodule "3rd/yaml-cpp"]
 	path = 3rd/yaml-cpp
 	url = https://github.com/jbeder/yaml-cpp.git
+[submodule "3rd/oatpp"]
+	path = 3rd/oatpp
+	url = https://github.com/oatpp/oatpp.git
